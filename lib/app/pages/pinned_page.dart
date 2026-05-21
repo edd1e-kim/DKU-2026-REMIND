@@ -192,7 +192,7 @@ class _PinnedPageState extends State<PinnedPage> {
                                 height: 1.4,
                               ),
                             ),
-                            const SizedBox(height: 8),
+                            const SizedBox(height: 8),fl
                             Text(
                               summary,
                               maxLines: 3,
