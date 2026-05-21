@@ -324,19 +324,37 @@ def get_instagram_data(url: str):
 
 def get_web_data(url: str):
     try:
+        # [네이버 블로그 iframe 크롤링 방어 로직]
+        if "blog.naver.com" in url and "PostView.naver" not in url:
+            # 일반 주소 패턴(blog.naver.com/아이디/글번호)에서 데이터 추출
+            match = re.search(r"blog\.naver\.com/([A-Za-z0-9_-]+)/(\d+)", url)
+            if match:
+                blog_id = match.group(1)
+                log_no = match.group(2)
+                # 실제 텍스트 내용이 날것으로 들어있는 진짜 알맹이 주소로 변환
+                url = f"https://blog.naver.com/PostView.naver?blogId={blog_id}&logNo={log_no}"
+
+        # 봇(Bot) 차단을 우회하기 위해 User-Agent를 조금 더 명확하게 명시
         res = requests.get(
             url,
-            headers={"User-Agent": "Mozilla/5.0"},
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"},
             timeout=10,
         )
 
         soup = BeautifulSoup(res.text, "html.parser")
 
-        title = soup.title.string.strip() if soup.title else "제목 없음"
+        # 네이버 블로그의 실제 글 제목은 og:title 메타태그에 가장 정확하게 들어있습니다.
+        og_title = soup.find("meta", property="og:title")
+        title = og_title.get("content").strip() if og_title else (soup.title.string.strip() if soup.title else "제목 없음")
 
         body = ""
         if soup.body:
-            body = soup.body.get_text(separator="\n", strip=True)[:3000]
+            # 네이버 스마트에디터 ONE 본문 영역 (.se-main-container)을 우선 탐색하여 광고/댓글 레이아웃 제외
+            naver_content = soup.find(class_="se-main-container") or soup.find(id="postViewArea")
+            if naver_content:
+                body = naver_content.get_text(separator="\n", strip=True)[:3000]
+            else:
+                body = soup.body.get_text(separator="\n", strip=True)[:3000]
 
         og = soup.find("meta", property="og:image")
         thumbnail = og.get("content") if og else ""
@@ -391,85 +409,192 @@ def extract_image_text(base64_image: str):
 
 @app.post("/analyze")
 def analyze_url(url: str):
-    if "instagram.com" in url:
-        _, content, thumbnail = get_instagram_data(url)
-    else:
-        _, content, thumbnail = get_web_data(url)
+    try:
+        if "instagram.com" in url:
+            _, content, thumbnail = get_instagram_data(url)
+        else:
+            _, content, thumbnail = get_web_data(url)
 
-    ai_title, summary, category, tags = get_ai_summary(content)
+        # [방어 로직] 스크래핑 자체가 실패해서 본문이 없을 때
+        if not content or content == "내용 없음":
+            return {
+                "status": "FAIL",
+                "url": url,
+                "title": "콘텐츠 로드 실패",
+                "summary": "링크에서 본문 내용을 가져오지 못했습니다.",
+                "category": "기타",
+                "tags": ["실패"],
+                "thumbnail": thumbnail,
+                "originalText": "내용 없음",
+                "contentType": "link",
+            }
 
-    return {
-        "status": "ACTIVE",
-        "url": url,
-        "title": ai_title,
-        "summary": summary,
-        "category": category,
-        "tags": tags,
-        "thumbnail": thumbnail,
-        "originalText": content,
-        "contentType": "link",
-    }
+        ai_title, summary, category, tags = get_ai_summary(content)
+
+        # [방어 로직] 스크래핑은 성공했으나 AI 요약에서 에러가 났을 때
+        if ai_title == "분석 실패":
+            return {
+                "status": "FAIL",
+                "url": url,
+                "title": "AI 요약 실패",
+                "summary": "AI 분석 중 오류가 발생했습니다.",
+                "category": "기타",
+                "tags": ["실패"],
+                "thumbnail": thumbnail,
+                "originalText": content,  # 지민님 요청: 원본 기록(텍스트)은 유지해서 반환
+                "contentType": "link",
+            }
+
+        return {
+            "status": "ACTIVE",
+            "url": url,
+            "title": ai_title,
+            "summary": summary,
+            "category": category,
+            "tags": tags,
+            "thumbnail": thumbnail,
+            "originalText": content,
+            "contentType": "link",
+        }
+    except Exception as e:
+        print(f"Global analyze error: {e}")
+        return {
+            "status": "FAIL",
+            "url": url,
+            "title": "시스템 오류",
+            "summary": "서버 내부 에러가 발생했습니다.",
+            "category": "기타",
+            "tags": ["에러"],
+            "thumbnail": "",
+            "originalText": "에러 발생",
+            "contentType": "link",
+        }
 
 
 @app.post("/analyze/image")
 async def analyze_image(files: List[UploadFile] = File(...)):
-    image_texts = []
+    try:
+        # [방어 로직] 파일이 아예 첨부되지 않았을 때
+        if not files or (len(files) == 1 and files[0].filename == ""):
+            return {
+                "status": "FAIL",
+                "url": "uploaded_file",
+                "title": "이미지 업로드 실패",
+                "summary": "첨부된 이미지 파일이 없습니다.",
+                "category": "기타",
+                "tags": ["실패"],
+                "thumbnail": "",
+                "originalText": "파일 없음",
+                "contentType": "image",
+            }
 
-    for i, file in enumerate(files, 1):
-        base64_img = base64.b64encode(await file.read()).decode("utf-8")
-        extracted_text = extract_image_text(base64_img)
+        image_texts = []
+        for i, file in enumerate(files, 1):
+            base64_img = base64.b64encode(await file.read()).decode("utf-8")
+            extracted_text = extract_image_text(base64_img)
+            image_texts.append(f"[이미지 {i}]\n{extracted_text}")
 
-        image_texts.append(f"[이미지 {i}]\n{extracted_text}")
+        all_text = "\n\n".join(image_texts).strip()
+        ai_title, summary, category, tags = get_ai_summary(all_text)
 
-    all_text = "\n\n".join(image_texts).strip()
+        # AI 분석 실패 시 처리
+        if ai_title == "분석 실패":
+            return {
+                "status": "FAIL",
+                "url": "uploaded_file",
+                "title": "AI 이미지 요약 실패",
+                "summary": "이미지 분석 중 오류가 발생했습니다.",
+                "category": "기타",
+                "tags": ["실패"],
+                "thumbnail": "",
+                "originalText": all_text,  # 원본 추출 텍스트는 보존
+                "contentType": "image",
+            }
 
-    ai_title, summary, category, tags = get_ai_summary(all_text)
-
-    return {
-        "status": "ACTIVE",
-        "url": "uploaded_file",
-        "title": ai_title,
-        "summary": summary,
-        "category": category,
-        "tags": tags,
-        "thumbnail": "",
-        "originalText": all_text,
-        "contentType": "image",
-    }
+        return {
+            "status": "ACTIVE",
+            "url": "uploaded_file",
+            "title": ai_title,
+            "summary": summary,
+            "category": category,
+            "tags": tags,
+            "thumbnail": "",
+            "originalText": all_text,
+            "contentType": "image",
+        }
+    except Exception as e:
+        print(f"Global image analyze error: {e}")
+        return {
+            "status": "FAIL",
+            "url": "uploaded_file",
+            "title": "시스템 오류",
+            "summary": "이미지 처리 중 서버 내부 에러가 발생했습니다.",
+            "category": "기타",
+            "tags": ["에러"],
+            "thumbnail": "",
+            "originalText": "에러 발생",
+            "contentType": "image",
+        }
 
 
 @app.post("/analyze/complex")
 async def analyze_complex(url: str, files: List[UploadFile] = File(...)):
-    if "instagram.com" in url:
-        _, url_content, thumbnail = get_instagram_data(url)
-    else:
-        _, url_content, thumbnail = get_web_data(url)
+    try:
+        if "instagram.com" in url:
+            _, url_content, thumbnail = get_instagram_data(url)
+        else:
+            _, url_content, thumbnail = get_web_data(url)
 
-    image_texts = []
+        image_texts = []
+        # 파일이 존재할 때만 OCR 진행
+        if files and files[0].filename != "":
+            for i, file in enumerate(files, 1):
+                base64_img = base64.b64encode(await file.read()).decode("utf-8")
+                extracted_text = extract_image_text(base64_img)
+                image_texts.append(f"[이미지 {i}]\n{extracted_text}")
 
-    for i, file in enumerate(files, 1):
-        base64_img = base64.b64encode(await file.read()).decode("utf-8")
-        extracted_text = extract_image_text(base64_img)
+        image_text = "\n\n".join(image_texts).strip()
+        combined = f"[링크 정보]\n{url_content}\n\n[이미지 텍스트]\n{image_text}".strip()
 
-        image_texts.append(f"[이미지 {i}]\n{extracted_text}")
+        ai_title, summary, category, tags = get_ai_summary(combined)
 
-    image_text = "\n\n".join(image_texts).strip()
+        if ai_title == "분석 실패":
+            return {
+                "status": "FAIL",
+                "url": url,
+                "title": "AI 복합 요약 실패",
+                "summary": "복합 콘텐츠 분석 중 오류가 발생했습니다.",
+                "category": "기타",
+                "tags": ["실패"],
+                "thumbnail": thumbnail,
+                "originalText": combined,
+                "contentType": "complex",
+            }
 
-    combined = f"[링크 정보]\n{url_content}\n\n[이미지 텍스트]\n{image_text}".strip()
-
-    ai_title, summary, category, tags = get_ai_summary(combined)
-
-    return {
-        "status": "ACTIVE",
-        "url": url,
-        "title": ai_title,
-        "summary": summary,
-        "category": category,
-        "tags": tags,
-        "thumbnail": thumbnail,
-        "originalText": combined,
-        "contentType": "complex",
-    }
+        return {
+            "status": "ACTIVE",
+            "url": url,
+            "title": ai_title,
+            "summary": summary,
+            "category": category,
+            "tags": tags,
+            "thumbnail": thumbnail,
+            "originalText": combined,
+            "contentType": "complex",
+        }
+    except Exception as e:
+        print(f"Global complex analyze error: {e}")
+        return {
+            "status": "FAIL",
+            "url": url,
+            "title": "시스템 오류",
+            "summary": "복합 분석 중 서버 내부 에러가 발생했습니다.",
+            "category": "기타",
+            "tags": ["에러"],
+            "thumbnail": "",
+            "originalText": "에러 발생",
+            "contentType": "complex",
+        }
 
 
 @app.post("/upload/images")
