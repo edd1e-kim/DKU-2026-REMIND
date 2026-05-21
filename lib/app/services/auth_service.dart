@@ -28,4 +28,28 @@ class AuthService {
 
   // 현재 사용자
   User? get currentUser => _auth.currentUser;
+
+  // 현재 사용자 정보 새로고침
+  Future<User?> reloadCurrentUser() async {
+    final user = _auth.currentUser;
+
+    if (user == null) {
+      return null;
+    }
+
+    await user.reload();
+    return _auth.currentUser;
+  }
+
+  // 닉네임 변경
+  Future<void> updateNickname(String nickname) async {
+    final user = _auth.currentUser;
+
+    if (user == null) {
+      throw Exception('로그인된 사용자가 없습니다.');
+    }
+
+    await user.updateDisplayName(nickname);
+    await user.reload();
+  }
 }

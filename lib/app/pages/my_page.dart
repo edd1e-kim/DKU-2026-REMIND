@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+
 import '../routes/app_routes.dart';
+import '../services/auth_service.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_radii.dart';
 import '../widgets/bottom_nav.dart';
@@ -12,7 +14,33 @@ class MyPage extends StatefulWidget {
 }
 
 class _MyPageState extends State<MyPage> {
+  final AuthService _authService = AuthService();
+
   int activeTab = 1;
+
+  String nickname = '사용자';
+  String email = '';
+
+  @override
+  void initState() {
+    super.initState();
+    loadUserInfo();
+  }
+
+  Future<void> loadUserInfo() async {
+    final user = await _authService.reloadCurrentUser();
+
+    if (!mounted) return;
+
+    setState(() {
+      nickname =
+          user?.displayName != null && user!.displayName!.trim().isNotEmpty
+              ? user.displayName!
+              : '사용자';
+
+      email = user?.email ?? '';
+    });
+  }
 
   void handleTabChange(int tab) {
     setState(() {
@@ -28,8 +56,38 @@ class _MyPageState extends State<MyPage> {
     }
   }
 
+  String getProfileLetter() {
+    final trimmedNickname = nickname.trim();
+    final trimmedEmail = email.trim();
+
+    if (trimmedNickname.isNotEmpty) {
+      return trimmedNickname[0].toUpperCase();
+    }
+
+    if (trimmedEmail.isNotEmpty) {
+      return trimmedEmail[0].toUpperCase();
+    }
+
+    return 'MY';
+  }
+
+  Future<void> goToAccountSettings() async {
+    final result = await Navigator.pushNamed(
+      context,
+      AppRoutes.accountSettings,
+    );
+
+    if (result == true) {
+      await loadUserInfo();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final String profileLetter = getProfileLetter();
+    final String displayNickname =
+        nickname.trim().isNotEmpty ? nickname.trim() : '사용자';
+
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
@@ -73,10 +131,10 @@ class _MyPageState extends State<MyPage> {
                     color: AppColors.peachDust,
                     shape: BoxShape.circle,
                   ),
-                  child: const Center(
+                  child: Center(
                     child: Text(
-                      'MY',
-                      style: TextStyle(
+                      profileLetter,
+                      style: const TextStyle(
                         color: Colors.white,
                         fontWeight: FontWeight.w700,
                         fontSize: 28,
@@ -85,14 +143,33 @@ class _MyPageState extends State<MyPage> {
                   ),
                 ),
                 const SizedBox(width: 16),
-                const Expanded(
-                  child: Text(
-                    '사용자님',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w700,
-                      fontSize: 22,
-                      color: AppColors.charcoal,
-                    ),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '$displayNickname님',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 22,
+                          color: AppColors.charcoal,
+                          height: 1.35,
+                        ),
+                      ),
+                      if (email.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          email,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            color: AppColors.textSecondary,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                 ),
               ],
@@ -122,9 +199,7 @@ class _MyPageState extends State<MyPage> {
                     ),
                   ),
                   trailing: const Icon(Icons.chevron_right),
-                  onTap: () {
-                    Navigator.pushNamed(context, AppRoutes.accountSettings);
-                  },
+                  onTap: goToAccountSettings,
                 ),
                 const Divider(height: 1),
                 ListTile(

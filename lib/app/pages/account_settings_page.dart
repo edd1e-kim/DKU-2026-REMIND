@@ -1,5 +1,6 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+
 import '../routes/app_routes.dart';
 import '../services/auth_service.dart';
 import '../theme/app_colors.dart';
@@ -18,16 +19,16 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
   late TextEditingController nicknameController;
   late TextEditingController emailController;
 
+  bool isSaving = false;
+
   @override
   void initState() {
     super.initState();
 
-    final User? user = FirebaseAuth.instance.currentUser;
+    nicknameController = TextEditingController(text: '사용자');
+    emailController = TextEditingController(text: '로그인 정보 없음');
 
-    nicknameController = TextEditingController(text: '사용자님');
-    emailController = TextEditingController(
-      text: user?.email ?? '로그인 정보 없음',
-    );
+    loadUserInfo();
   }
 
   @override
@@ -37,14 +38,72 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
     super.dispose();
   }
 
-  void handleSave() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('계정 정보 저장 기능은 나중에 연결할 수 있어요.'),
-        duration: Duration(seconds: 2),
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
+  Future<void> loadUserInfo() async {
+    final User? user = await _authService.reloadCurrentUser();
+
+    if (!mounted) return;
+
+    setState(() {
+      nicknameController.text =
+          user?.displayName != null && user!.displayName!.trim().isNotEmpty
+              ? user.displayName!
+              : '사용자';
+
+      emailController.text = user?.email ?? '로그인 정보 없음';
+    });
+  }
+
+  Future<void> handleSave() async {
+    final nickname = nicknameController.text.trim();
+
+    if (nickname.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('닉네임을 입력해주세요.'),
+          duration: Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
+    if (isSaving) return;
+
+    setState(() {
+      isSaving = true;
+    });
+
+    try {
+      await _authService.updateNickname(nickname);
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('닉네임이 저장되었습니다.'),
+          duration: Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+
+      Navigator.pop(context, true);
+    } catch (e) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('저장 중 오류가 발생했습니다: $e'),
+          duration: const Duration(seconds: 3),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          isSaving = false;
+        });
+      }
+    }
   }
 
   Future<void> handleLogout() async {
@@ -130,11 +189,10 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
           TextField(
             controller: controller,
             readOnly: readOnly,
+            enabled: !isSaving,
             decoration: InputDecoration(
               filled: true,
-              fillColor: readOnly
-                  ? const Color(0xFFF3F4F4)
-                  : AppColors.surface,
+              fillColor: readOnly ? const Color(0xFFF3F4F4) : AppColors.surface,
               contentPadding: const EdgeInsets.symmetric(
                 horizontal: 16,
                 vertical: 16,
@@ -144,6 +202,10 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
                 borderSide: const BorderSide(color: AppColors.divider),
               ),
               enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(AppRadii.button),
+                borderSide: const BorderSide(color: AppColors.divider),
+              ),
+              disabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(AppRadii.button),
                 borderSide: const BorderSide(color: AppColors.divider),
               ),
@@ -164,10 +226,16 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
   @override
   Widget build(BuildContext context) {
     final String emailText = emailController.text;
-    final String profileLetter =
-        emailText.isNotEmpty && emailText != '로그인 정보 없음'
+    final String nicknameText = nicknameController.text.trim();
+
+    final String profileLetter = nicknameText.isNotEmpty
+        ? nicknameText[0].toUpperCase()
+        : emailText.isNotEmpty && emailText != '로그인 정보 없음'
             ? emailText[0].toUpperCase()
             : 'MY';
+
+    final String displayNickname =
+        nicknameText.isNotEmpty ? nicknameText : '사용자';
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -184,7 +252,7 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
         ),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
-          onPressed: () => Navigator.pop(context),
+          onPressed: isSaving ? null : () => Navigator.pop(context),
         ),
       ),
       body: ListView(
@@ -226,14 +294,29 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
                 ),
                 const SizedBox(width: 16),
                 Expanded(
-                  child: Text(
-                    emailText,
-                    style: const TextStyle(
-                      color: AppColors.charcoal,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
-                      height: 1.5,
-                    ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '$displayNickname님',
+                        style: const TextStyle(
+                          color: AppColors.charcoal,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
+                          height: 1.4,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        emailText,
+                        style: const TextStyle(
+                          color: AppColors.textSecondary,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                          height: 1.4,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
@@ -269,7 +352,7 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
-                    onPressed: handleSave,
+                    onPressed: isSaving ? null : handleSave,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.peachDust,
                       foregroundColor: AppColors.charcoal,
@@ -279,9 +362,9 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
                         borderRadius: BorderRadius.circular(20),
                       ),
                     ),
-                    child: const Text(
-                      '저장하기',
-                      style: TextStyle(
+                    child: Text(
+                      isSaving ? '저장 중...' : '저장하기',
+                      style: const TextStyle(
                         fontWeight: FontWeight.w700,
                         fontSize: 16,
                       ),
@@ -316,7 +399,7 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
                     ),
                   ),
                   trailing: const Icon(Icons.chevron_right),
-                  onTap: handleLogout,
+                  onTap: isSaving ? null : handleLogout,
                 ),
                 const Divider(height: 1),
                 ListTile(
@@ -329,7 +412,7 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
                     ),
                   ),
                   trailing: const Icon(Icons.chevron_right),
-                  onTap: handleWithdraw,
+                  onTap: isSaving ? null : handleWithdraw,
                 ),
               ],
             ),
@@ -338,4 +421,4 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
       ),
     );
   }
-}skdl
+}

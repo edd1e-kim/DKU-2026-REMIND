@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+
 import '../theme/app_categories.dart';
 import '../routes/app_routes.dart';
+import '../services/auth_service.dart';
 import '../services/firestore_service.dart';
 import '../theme/app_colors.dart';
 import '../widgets/bottom_nav.dart';
@@ -15,12 +17,15 @@ class CollectionPage extends StatefulWidget {
 }
 
 class _CollectionPageState extends State<CollectionPage> {
+  final AuthService _authService = AuthService();
+  final FirestoreService _firestoreService = FirestoreService();
+
   int activeTab = 2;
   int categoryTab = 0;
   String searchQuery = '';
   String sortOrder = 'recent';
 
-  final FirestoreService _firestoreService = FirestoreService();
+  String nickname = '사용자';
 
   List<Map<String, dynamic>> collectedPosts = [];
   List<String> mainCategoryNames = [];
@@ -29,7 +34,21 @@ class _CollectionPageState extends State<CollectionPage> {
   @override
   void initState() {
     super.initState();
+    loadUserInfo();
     loadCollectedPosts();
+  }
+
+  Future<void> loadUserInfo() async {
+    final user = await _authService.reloadCurrentUser();
+
+    if (!mounted) return;
+
+    setState(() {
+      nickname =
+          user?.displayName != null && user!.displayName!.trim().isNotEmpty
+              ? user.displayName!
+              : '사용자';
+    });
   }
 
   Future<void> loadCollectedPosts() async {
@@ -421,9 +440,7 @@ class _CollectionPageState extends State<CollectionPage> {
     if (imageUrls.isEmpty) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: summaryLines
-            .map((line) => buildSummaryLine(line))
-            .toList(),
+        children: summaryLines.map((line) => buildSummaryLine(line)).toList(),
       );
     }
 
@@ -435,9 +452,8 @@ class _CollectionPageState extends State<CollectionPage> {
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
-            children: summaryLines
-                .map((line) => buildSummaryLine(line))
-                .toList(),
+            children:
+                summaryLines.map((line) => buildSummaryLine(line)).toList(),
           ),
         ),
       ],
@@ -513,6 +529,9 @@ class _CollectionPageState extends State<CollectionPage> {
       return bDate.compareTo(aDate);
     });
 
+    final String displayNickname =
+        nickname.trim().isNotEmpty ? nickname.trim() : '사용자';
+
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
@@ -547,7 +566,7 @@ class _CollectionPageState extends State<CollectionPage> {
                   borderRadius: BorderRadius.circular(28),
                 ),
                 child: Text(
-                  '이번 주 나만의 컬렉션이 ${filteredPosts.length}개 쌓였어요',
+                  '$displayNickname님의 이번 주 컬렉션이 ${filteredPosts.length}개 쌓였어요',
                   textAlign: TextAlign.center,
                   style: const TextStyle(
                     fontSize: 17,

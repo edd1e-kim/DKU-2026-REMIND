@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
 import '../routes/app_routes.dart';
+import '../services/auth_service.dart';
 import '../services/firestore_service.dart';
 import '../theme/app_colors.dart';
 import '../widgets/bottom_nav.dart';
@@ -15,10 +17,12 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
+  final AuthService _authService = AuthService();
+  final FirestoreService _firestoreService = FirestoreService();
+
   int activeTab = 1;
   String searchQuery = '';
-
-  final FirestoreService _firestoreService = FirestoreService();
+  String nickname = '사용자';
 
   static const String dismissedCategoryPrefsKey =
       'dismissed_suggested_categories';
@@ -39,7 +43,21 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
+    loadUserInfo();
     initializeSuggestion();
+  }
+
+  Future<void> loadUserInfo() async {
+    final user = await _authService.reloadCurrentUser();
+
+    if (!mounted) return;
+
+    setState(() {
+      nickname =
+          user?.displayName != null && user!.displayName!.trim().isNotEmpty
+              ? user.displayName!
+              : '사용자';
+    });
   }
 
   Future<void> initializeSuggestion() async {
@@ -49,8 +67,7 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> loadDismissedCategories() async {
     final prefs = await SharedPreferences.getInstance();
-    final saved =
-        prefs.getStringList(dismissedCategoryPrefsKey) ?? <String>[];
+    final saved = prefs.getStringList(dismissedCategoryPrefsKey) ?? <String>[];
 
     dismissedSuggestedCategories
       ..clear()
@@ -157,6 +174,77 @@ class _HomePageState extends State<HomePage> {
     Navigator.pushNamed(context, AppRoutes.categoryManage);
   }
 
+  Widget buildGreetingCard() {
+    final displayNickname = nickname.trim().isNotEmpty ? nickname.trim() : '사용자';
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(24),
+          boxShadow: const [
+            BoxShadow(
+              color: Color.fromRGBO(0, 0, 0, 0.04),
+              blurRadius: 10,
+              offset: Offset(0, 3),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: const BoxDecoration(
+                color: AppColors.peachDust,
+                shape: BoxShape.circle,
+              ),
+              child: Center(
+                child: Text(
+                  displayNickname[0].toUpperCase(),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '$displayNickname님, 반가워요',
+                    style: const TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.charcoal,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    '오늘도 저장한 콘텐츠를 다시 확인해볼까요?',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                      color: AppColors.textSecondary,
+                      height: 1.4,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final bool showCategoryAlert =
@@ -177,6 +265,7 @@ class _HomePageState extends State<HomePage> {
                 });
               },
             ),
+            buildGreetingCard(),
             if (showCategoryAlert)
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
