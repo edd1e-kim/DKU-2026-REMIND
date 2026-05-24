@@ -1,5 +1,6 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
+
 import '../routes/app_routes.dart';
 import '../services/firestore_service.dart';
 import '../theme/app_colors.dart';
@@ -94,6 +95,9 @@ class _HomeViewState extends State<HomeView> {
 
     final title = (post['title'] ?? '').toString().toLowerCase();
     final summary = (post['summary'] ?? '').toString().toLowerCase();
+    final shortSummary = (post['shortSummary'] ?? '').toString().toLowerCase();
+    final detailSummary =
+        (post['detailSummary'] ?? '').toString().toLowerCase();
     final url = (post['url'] ?? '').toString().toLowerCase();
     final category = getEffectiveCategory(post).toLowerCase();
     final memo = (post['memo'] ?? '').toString().toLowerCase();
@@ -106,6 +110,8 @@ class _HomeViewState extends State<HomeView> {
 
     return title.contains(q) ||
         summary.contains(q) ||
+        shortSummary.contains(q) ||
+        detailSummary.contains(q) ||
         url.contains(q) ||
         category.contains(q) ||
         memo.contains(q) ||
@@ -145,6 +151,7 @@ class _HomeViewState extends State<HomeView> {
     setState(() {
       sortOrder = type;
     });
+
     refreshRandomPosts();
   }
 
@@ -152,12 +159,14 @@ class _HomeViewState extends State<HomeView> {
     setState(() {
       hiddenToday.add(postId);
     });
+
     refreshRandomPosts();
   }
 
   @override
   void didUpdateWidget(covariant HomeView oldWidget) {
     super.didUpdateWidget(oldWidget);
+
     if (oldWidget.searchQuery != widget.searchQuery) {
       refreshRandomPosts();
     }
@@ -205,37 +214,125 @@ class _HomeViewState extends State<HomeView> {
     final url = (post['url'] ?? '').toString().trim();
 
     if (title.isNotEmpty) return title;
-    if (url.isNotEmpty) return url;
+
+    if (url.isNotEmpty && url != 'uploaded_image' && url != 'uploaded_file') {
+      return url;
+    }
+
     return '제목 없음';
   }
 
   bool isNumberedLine(String line) {
-    final numbers = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩'];
+    final numbers = [
+      '①',
+      '②',
+      '③',
+      '④',
+      '⑤',
+      '⑥',
+      '⑦',
+      '⑧',
+      '⑨',
+      '⑩',
+      '⑪',
+      '⑫',
+      '⑬',
+      '⑭',
+      '⑮',
+      '⑯',
+      '⑰',
+      '⑱',
+      '⑲',
+      '⑳',
+    ];
+
     return numbers.any((number) => line.trim().startsWith(number));
   }
 
-  List<String> getSummaryLines(Map<String, dynamic> post) {
-    final summary = (post['summary'] ?? '').toString().trim();
-    final url = (post['url'] ?? '').toString().trim();
+  bool isSectionTitleLine(String line) {
+    return RegExp(r'^\d+\)\s+').hasMatch(line.trim());
+  }
 
-    if (summary.isNotEmpty) {
-      return summary
-          .split('\n')
-          .map((e) => e.trim())
-          .where((e) => e.isNotEmpty)
-          .map((e) {
-            if (isNumberedLine(e)) {
-              return e;
-            }
+  bool isDashLine(String line) {
+    return line.trim().startsWith('-');
+  }
 
-            return e.replaceFirst(RegExp(r'^[•\-\*\.·]+\s*'), '');
-          })
-          .where((e) => e.isNotEmpty)
-          .take(3)
-          .toList();
+  String cleanPreviewLine(String line) {
+    var cleaned = line.trim();
+
+    cleaned = cleaned.replaceFirst(RegExp(r'^[•●▪▫]\s*'), '');
+
+    if (cleaned.startsWith('-')) {
+      cleaned = '- ${cleaned.substring(1).trim()}';
     }
 
-    if (url.isNotEmpty) {
+    if (cleaned.contains('▶')) {
+      cleaned = cleaned.split('▶').first.trim();
+    }
+
+    if (cleaned.contains('➔')) {
+      cleaned = cleaned.split('➔').first.trim();
+    }
+
+    if (cleaned.contains('→')) {
+      cleaned = cleaned.split('→').first.trim();
+    }
+
+    if (cleaned.contains(':') && cleaned.startsWith('-')) {
+      final parts = cleaned.split(':');
+
+      if (parts.first.trim().length <= 20) {
+        cleaned = parts.first.trim();
+      }
+    }
+
+    return cleaned.trim();
+  }
+
+  List<String> getSummaryLines(Map<String, dynamic> post) {
+    final shortSummary = (post['shortSummary'] ?? '').toString().trim();
+    final summary = (post['summary'] ?? '').toString().trim();
+    final detailSummary = (post['detailSummary'] ?? '').toString().trim();
+    final url = (post['url'] ?? '').toString().trim();
+
+    final sourceText = shortSummary.isNotEmpty
+        ? shortSummary
+        : summary.isNotEmpty
+            ? summary
+            : detailSummary;
+
+    if (sourceText.isNotEmpty) {
+      final rawLines = sourceText
+          .split('\n')
+          .map((e) => cleanPreviewLine(e))
+          .where((e) => e.isNotEmpty)
+          .where((e) => !e.contains('대한 내용입니다'))
+          .where((e) => !e.contains('나뉘어 있습니다'))
+          .toList();
+
+      final result = <String>[];
+
+      for (final line in rawLines) {
+        if (isSectionTitleLine(line)) {
+          result.add(line);
+          continue;
+        }
+
+        if (isDashLine(line)) {
+          result.add(line);
+        }
+
+        if (result.length >= 3) break;
+      }
+
+      if (result.isNotEmpty) {
+        return result.take(3).toList();
+      }
+
+      return rawLines.take(3).toList();
+    }
+
+    if (url.isNotEmpty && url != 'uploaded_image' && url != 'uploaded_file') {
       return [url];
     }
 
@@ -257,6 +354,7 @@ class _HomeViewState extends State<HomeView> {
     }
 
     final category = (post['category'] ?? '기타').toString();
+
     switch (category) {
       case '자기계발':
         return ['#기록', '#습관'];
@@ -301,6 +399,7 @@ class _HomeViewState extends State<HomeView> {
     final List<String> result = [];
 
     final rawImageUrls = post['imageUrls'];
+
     if (rawImageUrls is List) {
       result.addAll(
         rawImageUrls
@@ -312,6 +411,7 @@ class _HomeViewState extends State<HomeView> {
     }
 
     final rawImageUrlsSnake = post['image_urls'];
+
     if (rawImageUrlsSnake is List) {
       result.addAll(
         rawImageUrlsSnake
@@ -320,6 +420,14 @@ class _HomeViewState extends State<HomeView> {
             .where((e) => e != 'uploaded_image')
             .where((e) => e != 'uploaded_file'),
       );
+    }
+
+    final thumbnail = (post['thumbnail'] ?? '').toString().trim();
+
+    if (thumbnail.isNotEmpty &&
+        thumbnail != 'uploaded_image' &&
+        thumbnail != 'uploaded_file') {
+      result.add(thumbnail);
     }
 
     return result.toSet().toList();
@@ -359,68 +467,37 @@ class _HomeViewState extends State<HomeView> {
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(18),
-      child: SizedBox(
+      child: Image.network(
+        fixedUrl,
         width: 116,
         height: 116,
-        child: Image.network(
-          fixedUrl,
-          fit: BoxFit.cover,
-          errorBuilder: (context, error, stackTrace) {
-            return const SizedBox.shrink();
-          },
-        ),
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) {
+          return const SizedBox.shrink();
+        },
       ),
     );
   }
 
   Widget buildSummaryLine(String line, {double height = 1.6}) {
-    final trimmed = line.trim();
+    final trimmed = cleanPreviewLine(line);
 
-    if (isNumberedLine(trimmed)) {
-      return Padding(
-        padding: const EdgeInsets.only(bottom: 8),
-        child: Align(
-          alignment: Alignment.centerLeft,
-          child: Text(
-            trimmed,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: 14,
-              height: height,
-              fontWeight: FontWeight.w500,
-              color: AppColors.charcoal,
-            ),
-          ),
-        ),
-      );
+    if (trimmed.isEmpty) {
+      return const SizedBox.shrink();
     }
-
-    final cleaned = trimmed.replaceFirst(RegExp(r'^[•\-\*\.·]+\s*'), '');
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            '• ',
-            style: TextStyle(fontSize: 14),
-          ),
-          Expanded(
-            child: Text(
-              cleaned,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 14,
-                height: height,
-                fontWeight: FontWeight.w500,
-                color: AppColors.charcoal,
-              ),
-            ),
-          ),
-        ],
+      child: Text(
+        trimmed,
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          fontSize: 14,
+          height: height,
+          fontWeight: FontWeight.w500,
+          color: AppColors.charcoal,
+        ),
       ),
     );
   }
@@ -432,9 +509,7 @@ class _HomeViewState extends State<HomeView> {
     if (imageUrls.isEmpty) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: summaryLines
-            .map((line) => buildSummaryLine(line))
-            .toList(),
+        children: summaryLines.map((line) => buildSummaryLine(line)).toList(),
       );
     }
 
@@ -446,12 +521,89 @@ class _HomeViewState extends State<HomeView> {
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
-            children: summaryLines
-                .map((line) => buildSummaryLine(line))
-                .toList(),
+            children:
+                summaryLines.map((line) => buildSummaryLine(line)).toList(),
           ),
         ),
       ],
+    );
+  }
+
+  Widget buildEmptyReviewCard() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 36),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(28),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x12000000),
+            blurRadius: 14,
+            offset: Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          Container(
+            width: 64,
+            height: 64,
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFE7E0),
+              borderRadius: BorderRadius.circular(24),
+            ),
+            child: const Icon(
+              Icons.auto_awesome,
+              color: AppColors.peachDust,
+              size: 32,
+            ),
+          ),
+          const SizedBox(height: 18),
+          const Text(
+            '아직 되돌아볼 카드가 없어요',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w800,
+              color: AppColors.charcoal,
+            ),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            '아카이브에 저장한 콘텐츠가 생기면\nAI가 오늘 다시 보면 좋을 카드를 추천해드려요.',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 14,
+              height: 1.5,
+              color: AppColors.textSecondary,
+            ),
+          ),
+          const SizedBox(height: 20),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pushNamed(context, AppRoutes.add);
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.peachDust,
+              foregroundColor: AppColors.charcoal,
+              elevation: 0,
+              padding: const EdgeInsets.symmetric(
+                horizontal: 24,
+                vertical: 14,
+              ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(24),
+              ),
+            ),
+            child: const Text(
+              '콘텐츠 저장하러 가기',
+              style: TextStyle(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -688,7 +840,9 @@ class _HomeViewState extends State<HomeView> {
 
     final visibleRandomPosts = randomPosts.where((post) {
       final id = (post['id'] ?? '').toString();
+
       if (hiddenToday.contains(id)) return false;
+
       return matchesSearch(post, widget.searchQuery);
     }).toList();
 
@@ -826,15 +980,18 @@ class _HomeViewState extends State<HomeView> {
           ],
         ),
         const SizedBox(height: 16),
-        ...visibleRandomPosts.map(
-          (post) => Padding(
-            padding: const EdgeInsets.only(bottom: 16),
-            child: buildPostCard(
-              post,
-              allowHideToday: true,
+        if (visibleRandomPosts.isEmpty)
+          buildEmptyReviewCard()
+        else
+          ...visibleRandomPosts.map(
+            (post) => Padding(
+              padding: const EdgeInsets.only(bottom: 16),
+              child: buildPostCard(
+                post,
+                allowHideToday: true,
+              ),
             ),
           ),
-        ),
       ],
     );
   }

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
+
 import '../services/firestore_service.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_radii.dart';
@@ -21,6 +23,7 @@ class _PostDetailPageState extends State<PostDetailPage> {
   bool isRead = false;
   bool isEditingSummary = false;
   bool isOriginalExpanded = false;
+  bool isCompactSummary = false;
 
   Map<String, dynamic>? post;
   late TextEditingController summaryController;
@@ -41,15 +44,32 @@ class _PostDetailPageState extends State<PostDetailPage> {
     super.dispose();
   }
 
+  bool get isAnalysisCompleted {
+    final status = (post?['status'] ?? 'ACTIVE').toString();
+    return status == 'ACTIVE' || status == 'COMPLETED';
+  }
+
+  bool get isAnalyzing {
+    final status = (post?['status'] ?? '').toString();
+    return status == 'ANALYZING';
+  }
+
+  bool get isFailed {
+    final status = (post?['status'] ?? '').toString();
+    return status == 'FAILED';
+  }
+
   Future<void> loadPost() async {
     final id = widget.postId;
 
     if (id == null || id.isEmpty) {
       if (!mounted) return;
+
       setState(() {
         isLoading = false;
         post = null;
       });
+
       return;
     }
 
@@ -57,12 +77,15 @@ class _PostDetailPageState extends State<PostDetailPage> {
 
     if (!mounted) return;
 
+    final detailSummary =
+        (data?['detailSummary'] ?? data?['summary'] ?? '').toString().trim();
+
     setState(() {
       post = data;
       isLoading = false;
       isFavorite = data?['isFavorite'] ?? false;
       isRead = data?['isRead'] ?? false;
-      summaryController.text = (data?['summary'] ?? '').toString();
+      summaryController.text = detailSummary;
       memoController.text = (data?['memo'] ?? '').toString();
     });
   }
@@ -97,34 +120,100 @@ class _PostDetailPageState extends State<PostDetailPage> {
     );
   }
 
-  Future<void> markAsMastered() async {
-    if (post == null) return;
+  Future<void> togglePinned() async {
+    if (post == null || !isAnalysisCompleted) return;
 
     final id = post!['id'].toString();
-    await _firestoreService.updateCollectedStatus(id, true);
+    final currentValue = post!['isPinned'] ?? false;
+
+    await _firestoreService.updatePinnedStatus(id, !currentValue);
     await loadPost();
 
     if (!mounted) return;
 
     ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(!currentValue ? '홈에 고정했습니다.' : '홈 고정을 해제했습니다.'),
+        duration: const Duration(seconds: 2),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  Future<void> moveToTrash() async {
+    if (post == null || !isAnalysisCompleted) return;
+
+    final shouldMove = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('휴지통으로 이동할까요?'),
+          content: const Text('이 콘텐츠는 휴지통에서 다시 복구할 수 있습니다.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('취소'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('이동'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (shouldMove != true) return;
+
+    final id = post!['id'].toString();
+    await _firestoreService.moveToTrash(id);
+
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
-        content: Text('컬렉션으로 이동했습니다.'),
+        content: Text('휴지통으로 이동했습니다.'),
         duration: Duration(seconds: 2),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+
+    Navigator.pop(context);
+  }
+
+  Future<void> toggleMastered() async {
+    if (post == null || !isAnalysisCompleted) return;
+
+    final id = post!['id'].toString();
+    final currentValue = post!['isCollected'] ?? false;
+
+    await _firestoreService.updateCollectedStatus(id, !currentValue);
+    await loadPost();
+
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(!currentValue ? '마스터 완료했습니다.' : '마스터 완료를 취소했습니다.'),
+        duration: const Duration(seconds: 2),
         behavior: SnackBarBehavior.floating,
       ),
     );
   }
 
   Future<void> saveSummary() async {
-    if (post == null) return;
+    if (post == null || !isAnalysisCompleted) return;
 
     final id = post!['id'].toString();
-    await _firestoreService.updateSummary(id, summaryController.text.trim());
+    final editedSummary = summaryController.text.trim();
+
+    await _firestoreService.updateSummary(id, editedSummary);
 
     if (!mounted) return;
 
     setState(() {
       isEditingSummary = false;
+      isCompactSummary = false;
     });
 
     ScaffoldMessenger.of(context).showSnackBar(
@@ -139,7 +228,7 @@ class _PostDetailPageState extends State<PostDetailPage> {
   }
 
   Future<void> saveMemo() async {
-    if (post == null) return;
+    if (post == null || !isAnalysisCompleted) return;
 
     final id = post!['id'].toString();
     await _firestoreService.updateMemo(id, memoController.text.trim());
@@ -155,6 +244,22 @@ class _PostDetailPageState extends State<PostDetailPage> {
     );
 
     await loadPost();
+  }
+
+  Future<void> copyText(String text, String message) async {
+    if (!isAnalysisCompleted) return;
+
+    await Clipboard.setData(ClipboardData(text: text));
+
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        duration: const Duration(seconds: 2),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 
   Future<void> openOriginalLink() async {
@@ -191,43 +296,137 @@ class _PostDetailPageState extends State<PostDetailPage> {
     }
   }
 
-  DateTime? parseCreatedAt(dynamic createdAt) {
-    try {
-      if (createdAt == null) return null;
+  Future<void> showCategoryEditSheet() async {
+    if (post == null || !isAnalysisCompleted) return;
 
-      if (createdAt is DateTime) {
-        return createdAt;
+    final categories = await _firestoreService.getCategories();
+
+    if (!mounted) return;
+
+    final currentCategory = (post!['category'] ?? '기타').toString();
+
+    final selected = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: AppColors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) {
+        final categoryNames = categories
+            .map((e) => (e['name'] ?? '').toString().trim())
+            .where((e) => e.isNotEmpty)
+            .toSet()
+            .toList();
+
+        if (!categoryNames.contains('기타')) {
+          categoryNames.add('기타');
+        }
+
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 18, 20, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 44,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: AppColors.divider,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+                const SizedBox(height: 18),
+                const Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    '카테고리 수정',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.charcoal,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Flexible(
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: categoryNames.length,
+                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    itemBuilder: (context, index) {
+                      final category = categoryNames[index];
+                      final isSelected = category == currentCategory;
+
+                      return ListTile(
+                        title: Text(
+                          category,
+                          style: TextStyle(
+                            fontWeight:
+                                isSelected ? FontWeight.w800 : FontWeight.w500,
+                          ),
+                        ),
+                        trailing: isSelected
+                            ? const Icon(
+                                Icons.check,
+                                color: AppColors.paleLavenderDark,
+                              )
+                            : null,
+                        onTap: () => Navigator.pop(context, category),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    if (selected == null || selected == currentCategory) return;
+
+    final id = post!['id'].toString();
+    await _firestoreService.updatePostCategory(id, selected);
+    await loadPost();
+
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('카테고리를 수정했습니다.'),
+        duration: Duration(seconds: 2),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  DateTime? parseDate(dynamic value) {
+    try {
+      if (value == null) return null;
+
+      if (value is DateTime) {
+        return value;
       }
 
-      return createdAt.toDate();
+      return value.toDate();
     } catch (_) {
       return null;
     }
   }
 
   String formatDate(dynamic createdAt) {
-    try {
-      if (createdAt == null) return '날짜 없음';
+    final date = parseDate(createdAt);
 
-      if (createdAt is DateTime) {
-        return '${createdAt.year}.${createdAt.month.toString().padLeft(2, '0')}.${createdAt.day.toString().padLeft(2, '0')}';
-      }
+    if (date == null) return '날짜 없음';
 
-      if (createdAt.toString().contains('Timestamp')) {
-        final date = createdAt.toDate();
-        return '${date.year}.${date.month.toString().padLeft(2, '0')}.${date.day.toString().padLeft(2, '0')}';
-      }
-
-      return createdAt.toString();
-    } catch (_) {
-      return '날짜 없음';
-    }
+    return '${date.year}.${date.month.toString().padLeft(2, '0')}.${date.day.toString().padLeft(2, '0')}';
   }
 
   String getMasterBadgeText() {
     if (post == null) return '🏆 마스터 완료';
 
-    final completedAt = parseCreatedAt(post!['completedAt']);
+    final completedAt = parseDate(post!['completedAt']);
 
     if (completedAt == null) {
       return '🏆 마스터 완료';
@@ -254,10 +453,69 @@ class _PostDetailPageState extends State<PostDetailPage> {
     }
   }
 
+  String cleanSummaryLineForDisplay(String line) {
+    var cleaned = line.trim();
+
+    cleaned = cleaned.replaceFirst(RegExp(r'^[•●▪▫]\s*'), '');
+
+    if (cleaned.startsWith('-')) {
+      cleaned = '- ${cleaned.substring(1).trim()}';
+    }
+
+    return cleaned.trim();
+  }
+
+  String removeDetailDescription(String line) {
+    var cleaned = cleanSummaryLineForDisplay(line);
+
+    if (cleaned.contains('▶')) {
+      cleaned = cleaned.split('▶').first.trim();
+    }
+
+    if (cleaned.contains('➔')) {
+      cleaned = cleaned.split('➔').first.trim();
+    }
+
+    if (cleaned.contains('→')) {
+      cleaned = cleaned.split('→').first.trim();
+    }
+
+    if (cleaned.contains(':')) {
+      final parts = cleaned.split(':');
+      final head = parts.first.trim();
+
+      if (cleaned.startsWith('-') || RegExp(r'^\d+[\)\.]\s+').hasMatch(cleaned)) {
+        if (head.length <= 40) {
+          cleaned = head;
+        }
+      }
+    }
+
+    return cleaned.trim();
+  }
+
+  bool isSectionTitleLine(String line) {
+    return RegExp(r'^\d+\)\s+').hasMatch(line.trim());
+  }
+
+  bool isDashLine(String line) {
+    return line.trim().startsWith('-');
+  }
+
+  bool isIntroLine(String line) {
+    final trimmed = line.trim();
+
+    if (trimmed.isEmpty) return false;
+    if (isSectionTitleLine(trimmed)) return false;
+    if (isDashLine(trimmed)) return false;
+
+    return true;
+  }
+
   List<String> getSummaryList(String summary) {
     final lines = summary
         .split('\n')
-        .map((e) => e.trim())
+        .map((e) => cleanSummaryLineForDisplay(e))
         .where((e) => e.isNotEmpty)
         .toList();
 
@@ -266,97 +524,115 @@ class _PostDetailPageState extends State<PostDetailPage> {
     return ['요약 정보가 없습니다.'];
   }
 
-  bool isNumberedLine(String line) {
-    final numbers = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩'];
-    return numbers.any((number) => line.trim().startsWith(number));
-  }
+  List<String> getCompactSummaryList() {
+    final shortSummary = (post?['shortSummary'] ?? '').toString().trim();
+    final detailSummary = summaryController.text.trim();
 
-  Widget buildStyledSummaryText(String text, {double height = 1.65}) {
-    final trimmed = text.trim();
-    final cleaned = trimmed.replaceFirst(
-      RegExp(r'^[•\-\*]\s*'),
-      '',
-    );
+    final sourceText = shortSummary.isNotEmpty ? shortSummary : detailSummary;
 
-    final colonIndex = cleaned.indexOf(':');
+    final rawLines = sourceText
+        .split('\n')
+        .map((e) => removeDetailDescription(e))
+        .where((e) => e.isNotEmpty)
+        .where((e) => !e.contains('대한 내용입니다'))
+        .where((e) => !e.contains('나뉘어 있습니다'))
+        .toList();
 
-    if (colonIndex == -1) {
-      return Text(
-        cleaned,
-        style: TextStyle(
-          height: height,
-          fontSize: 16,
-          color: AppColors.charcoal,
-          fontWeight: FontWeight.w400,
-        ),
-      );
+    final result = <String>[];
+
+    final numberedLines = rawLines.where((line) {
+      return RegExp(r'^\d+[\)\.]\s+').hasMatch(line.trim());
+    }).toList();
+
+    if (numberedLines.length >= 5) {
+      return numberedLines.take(5).toList();
     }
 
-    final title = cleaned.substring(0, colonIndex + 1);
-    final body = cleaned.substring(colonIndex + 1).trimLeft();
+    String? currentSection;
+    int sectionItemCount = 0;
 
-    return RichText(
-      text: TextSpan(
-        style: TextStyle(
-          height: height,
-          fontSize: 16,
-          color: AppColors.charcoal,
-        ),
-        children: [
-          TextSpan(
-            text: title,
-            style: const TextStyle(
-              fontWeight: FontWeight.w800,
-              color: AppColors.charcoal,
-            ),
-          ),
-          TextSpan(
-            text: body.isNotEmpty ? ' $body' : '',
-            style: const TextStyle(
-              fontWeight: FontWeight.w400,
-              color: AppColors.charcoal,
-            ),
-          ),
-        ],
-      ),
-    );
+    for (final line in rawLines) {
+      if (isSectionTitleLine(line)) {
+        currentSection = line;
+        sectionItemCount = 0;
+
+        if (result.length < 9) {
+          result.add(line);
+        }
+
+        continue;
+      }
+
+      if (currentSection != null && isDashLine(line)) {
+        if (sectionItemCount < 2 && result.length < 9) {
+          result.add(line);
+          sectionItemCount++;
+        }
+      }
+
+      if (result.length >= 9) break;
+    }
+
+    if (result.isNotEmpty) return result;
+
+    return rawLines.take(5).toList();
+  }
+
+  String getCurrentSummaryTextForCopy() {
+    final lines = isCompactSummary
+        ? getCompactSummaryList()
+        : getSummaryList(summaryController.text.trim());
+
+    return lines.join('\n');
   }
 
   Widget buildSummaryLine(String line) {
-    final trimmed = line.trim();
+    final trimmed = cleanSummaryLineForDisplay(line);
 
-    if (isNumberedLine(trimmed)) {
+    if (trimmed.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    if (isSectionTitleLine(trimmed)) {
       return Padding(
-        padding: const EdgeInsets.only(bottom: 12),
-        child: Align(
-          alignment: Alignment.centerLeft,
-          child: buildStyledSummaryText(trimmed),
+        padding: const EdgeInsets.only(top: 18, bottom: 8),
+        child: Text(
+          trimmed,
+          style: const TextStyle(
+            fontSize: 17,
+            fontWeight: FontWeight.w800,
+            color: AppColors.charcoal,
+            height: 1.5,
+          ),
         ),
       );
     }
 
-    final cleaned = trimmed.replaceFirst(
-      RegExp(r'^[•\-\*]\s*'),
-      '',
-    );
+    if (isDashLine(trimmed)) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: Text(
+          trimmed,
+          style: const TextStyle(
+            fontSize: 16,
+            color: AppColors.charcoal,
+            fontWeight: FontWeight.w400,
+            height: 1.65,
+          ),
+        ),
+      );
+    }
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            '• ',
-            style: TextStyle(
-              fontSize: 16,
-              color: AppColors.charcoal,
-              height: 1.65,
-            ),
-          ),
-          Expanded(
-            child: buildStyledSummaryText(cleaned),
-          ),
-        ],
+      child: Text(
+        trimmed,
+        style: const TextStyle(
+          fontSize: 16,
+          color: AppColors.charcoal,
+          fontWeight: FontWeight.w400,
+          height: 1.65,
+        ),
       ),
     );
   }
@@ -372,6 +648,37 @@ class _PostDetailPageState extends State<PostDetailPage> {
           color: AppColors.charcoal,
           height: 1.45,
         ),
+      ),
+    );
+  }
+
+  Widget buildSummaryModeButton() {
+    if (isEditingSummary) {
+      return const SizedBox.shrink();
+    }
+
+    return TextButton.icon(
+      onPressed: !isAnalysisCompleted
+          ? null
+          : () {
+              setState(() {
+                isCompactSummary = !isCompactSummary;
+              });
+            },
+      icon: Icon(
+        isCompactSummary ? Icons.notes : Icons.compress,
+        size: 16,
+      ),
+      label: Text(
+        isCompactSummary ? '자세히 보기' : '핵심만 보기',
+        style: const TextStyle(
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      style: TextButton.styleFrom(
+        foregroundColor: AppColors.paleLavenderDark,
+        disabledForegroundColor: AppColors.textDisabled,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       ),
     );
   }
@@ -526,34 +833,15 @@ class _PostDetailPageState extends State<PostDetailPage> {
   Widget buildMasterAction() {
     final bool isCollected = post?['isCollected'] ?? false;
 
-    if (isCollected) {
-      return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        decoration: BoxDecoration(
-          color: AppColors.butterYellow,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            color: const Color(0xFFE0D38A),
-          ),
-        ),
-        child: Text(
-          getMasterBadgeText(),
-          style: const TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
-            color: AppColors.charcoal,
-          ),
-        ),
-      );
-    }
-
     return ElevatedButton(
-      onPressed: markAsMastered,
+      onPressed: !isAnalysisCompleted ? null : toggleMastered,
       style: ElevatedButton.styleFrom(
         backgroundColor: AppColors.butterYellow,
         foregroundColor: AppColors.charcoal,
+        disabledBackgroundColor: Colors.grey.shade300,
+        disabledForegroundColor: Colors.grey.shade600,
         elevation: 0,
-        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(14),
           side: const BorderSide(
@@ -561,9 +849,9 @@ class _PostDetailPageState extends State<PostDetailPage> {
           ),
         ),
       ),
-      child: const Text(
-        '🏆 마스터 하기',
-        style: TextStyle(
+      child: Text(
+        isCollected ? getMasterBadgeText() : '🏆 마스터 하기',
+        style: const TextStyle(
           fontSize: 14,
           fontWeight: FontWeight.w700,
         ),
@@ -693,6 +981,61 @@ class _PostDetailPageState extends State<PostDetailPage> {
     );
   }
 
+  Widget buildDisabledNotice() {
+    if (!isAnalyzing) return const SizedBox.shrink();
+
+    return Container(
+      margin: const EdgeInsets.only(top: 14),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFEDE7F6),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: const Text(
+        'AI 분석이 끝나면 마스터, 고정, 휴지통 이동, 카테고리 수정, 복사, 편집 기능을 사용할 수 있어요.',
+        style: TextStyle(
+          color: AppColors.paleLavenderDark,
+          fontSize: 13,
+          height: 1.5,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+
+  PopupMenuButton<String> buildMoreMenu() {
+    final bool isPinned = post?['isPinned'] ?? false;
+
+    return PopupMenuButton<String>(
+      enabled: isAnalysisCompleted,
+      onSelected: (value) async {
+        if (value == 'pin') {
+          await togglePinned();
+        } else if (value == 'category') {
+          await showCategoryEditSheet();
+        } else if (value == 'trash') {
+          await moveToTrash();
+        }
+      },
+      itemBuilder: (context) {
+        return [
+          PopupMenuItem(
+            value: 'pin',
+            child: Text(isPinned ? '홈 고정 해제' : '홈에 고정'),
+          ),
+          const PopupMenuItem(
+            value: 'category',
+            child: Text('카테고리 수정'),
+          ),
+          const PopupMenuItem(
+            value: 'trash',
+            child: Text('휴지통으로 이동'),
+          ),
+        ];
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (isLoading) {
@@ -721,13 +1064,18 @@ class _PostDetailPageState extends State<PostDetailPage> {
         : (post!['url'] ?? '제목 없음').toString();
 
     final dateText = formatDate(post!['createdAt']);
-    final summaryText = summaryController.text.trim();
-    final summaryList = getSummaryList(summaryText);
+
+    final detailSummaryText = summaryController.text.trim();
+    final displayedSummaryList = isCompactSummary
+        ? getCompactSummaryList()
+        : getSummaryList(detailSummaryText);
+
     final imageUrls = getImageUrls();
 
     final rawUrl = (post!['url'] ?? '').toString().trim();
-    final bool hasOriginalLink =
-        rawUrl.isNotEmpty && rawUrl != 'uploaded_image' && rawUrl != 'uploaded_file';
+    final bool hasOriginalLink = rawUrl.isNotEmpty &&
+        rawUrl != 'uploaded_image' &&
+        rawUrl != 'uploaded_file';
 
     final originalText =
         ((post!['originalText'] ?? '').toString().trim().isNotEmpty)
@@ -753,19 +1101,20 @@ class _PostDetailPageState extends State<PostDetailPage> {
         actions: [
           IconButton(
             tooltip: isRead ? '읽음' : '읽지 않음',
-            onPressed: toggleRead,
+            onPressed: isAnalysisCompleted ? toggleRead : null,
             icon: Icon(
               isRead ? Icons.check_circle : Icons.check_circle_outline,
               color: isRead ? const Color(0xFF95DDB4) : AppColors.charcoal,
             ),
           ),
           IconButton(
-            onPressed: toggleFavorite,
+            onPressed: isAnalysisCompleted ? toggleFavorite : null,
             icon: Icon(
               isFavorite ? Icons.star : Icons.star_border,
               color: isFavorite ? AppColors.star : AppColors.charcoal,
             ),
           ),
+          buildMoreMenu(),
         ],
       ),
       body: ListView(
@@ -774,22 +1123,39 @@ class _PostDetailPageState extends State<PostDetailPage> {
           Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                decoration: BoxDecoration(
-                  color: getCategoryChipColor(category),
-                  borderRadius: BorderRadius.circular(AppRadii.chip),
-                  border: Border.all(
-                    color: const Color.fromRGBO(176, 159, 255, 0.35),
+              InkWell(
+                onTap: isAnalysisCompleted ? showCategoryEditSheet : null,
+                borderRadius: BorderRadius.circular(AppRadii.chip),
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: getCategoryChipColor(category),
+                    borderRadius: BorderRadius.circular(AppRadii.chip),
+                    border: Border.all(
+                      color: const Color.fromRGBO(176, 159, 255, 0.35),
+                    ),
                   ),
-                ),
-                child: Text(
-                  category,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.charcoal,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        category,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.charcoal,
+                        ),
+                      ),
+                      if (isAnalysisCompleted) ...[
+                        const SizedBox(width: 6),
+                        const Icon(
+                          Icons.edit,
+                          size: 13,
+                          color: AppColors.textSecondary,
+                        ),
+                      ],
+                    ],
                   ),
                 ),
               ),
@@ -808,14 +1174,18 @@ class _PostDetailPageState extends State<PostDetailPage> {
               buildMasterAction(),
             ],
           ),
+          buildDisabledNotice(),
           const SizedBox(height: 16),
           Text(
             title,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
             style: const TextStyle(
-              fontWeight: FontWeight.w700,
-              fontSize: 28,
+              fontWeight: FontWeight.w800,
+              fontSize: 24,
               color: AppColors.charcoal,
-              height: 1.3,
+              height: 1.25,
+              letterSpacing: -0.5,
             ),
           ),
           const SizedBox(height: 8),
@@ -882,15 +1252,33 @@ class _PostDetailPageState extends State<PostDetailPage> {
                         ),
                       ),
                       IconButton(
-                        onPressed: () async {
-                          if (isEditingSummary) {
-                            await saveSummary();
-                          } else {
-                            setState(() {
-                              isEditingSummary = true;
-                            });
-                          }
-                        },
+                        tooltip: '요약 복사',
+                        onPressed: isAnalysisCompleted
+                            ? () => copyText(
+                                  getCurrentSummaryTextForCopy(),
+                                  '요약을 복사했습니다.',
+                                )
+                            : null,
+                        icon: const Icon(
+                          Icons.copy,
+                          size: 18,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                      buildSummaryModeButton(),
+                      IconButton(
+                        onPressed: !isAnalysisCompleted
+                            ? null
+                            : () async {
+                                if (isEditingSummary) {
+                                  await saveSummary();
+                                } else {
+                                  setState(() {
+                                    isEditingSummary = true;
+                                    isCompactSummary = false;
+                                  });
+                                }
+                              },
                         icon: Icon(
                           isEditingSummary ? Icons.check : Icons.edit,
                           size: 18,
@@ -901,19 +1289,32 @@ class _PostDetailPageState extends State<PostDetailPage> {
                       ),
                     ],
                   ),
-                  const SizedBox(height: 8),
+                  if (!isEditingSummary) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      isCompactSummary
+                          ? '세부 설명을 줄이고 핵심 행동만 보여드려요.'
+                          : '기본은 자세히 보기예요. 원본을 다시 보지 않아도 되게 정리했어요.',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: AppColors.textSecondary,
+                        height: 1.4,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 12),
                   buildSummaryTitleText(title),
                   if (!isEditingSummary)
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
-                      children: summaryList
+                      children: displayedSummaryList
                           .map((line) => buildSummaryLine(line))
                           .toList(),
                     )
                   else
                     TextField(
                       controller: summaryController,
-                      maxLines: 6,
+                      maxLines: 12,
                       decoration: const InputDecoration(
                         hintText: '엔터로 항목을 구분하세요',
                       ),
@@ -932,6 +1333,17 @@ class _PostDetailPageState extends State<PostDetailPage> {
                     fontWeight: FontWeight.w700,
                     color: AppColors.charcoal,
                   ),
+                ),
+              ),
+              IconButton(
+                tooltip: '원본 글 복사',
+                onPressed: isAnalysisCompleted
+                    ? () => copyText(originalText, '원본 글을 복사했습니다.')
+                    : null,
+                icon: const Icon(
+                  Icons.copy,
+                  size: 18,
+                  color: AppColors.textSecondary,
                 ),
               ),
               TextButton.icon(
@@ -983,7 +1395,7 @@ class _PostDetailPageState extends State<PostDetailPage> {
                 ),
               ),
               TextButton(
-                onPressed: saveMemo,
+                onPressed: isAnalysisCompleted ? saveMemo : null,
                 child: const Text('저장'),
               ),
             ],
@@ -997,6 +1409,7 @@ class _PostDetailPageState extends State<PostDetailPage> {
             ),
             child: TextField(
               controller: memoController,
+              enabled: isAnalysisCompleted,
               minLines: 5,
               maxLines: null,
               decoration: const InputDecoration(

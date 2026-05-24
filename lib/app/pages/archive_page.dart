@@ -28,6 +28,9 @@ class _ArchivePageState extends State<ArchivePage> {
   bool isLoading = true;
   bool _hasLoadedOnce = false;
 
+  bool isSelectionMode = false;
+  Set<String> selectedPostIds = {};
+
   @override
   void initState() {
     super.initState();
@@ -66,6 +69,57 @@ class _ArchivePageState extends State<ArchivePage> {
       isLoading = false;
       _hasLoadedOnce = true;
     });
+  }
+
+  void startSelection(String id) {
+    setState(() {
+      isSelectionMode = true;
+      selectedPostIds.add(id);
+    });
+  }
+
+  void toggleSelection(String id) {
+    setState(() {
+      if (selectedPostIds.contains(id)) {
+        selectedPostIds.remove(id);
+      } else {
+        selectedPostIds.add(id);
+      }
+
+      if (selectedPostIds.isEmpty) {
+        isSelectionMode = false;
+      }
+    });
+  }
+
+  void clearSelection() {
+    setState(() {
+      isSelectionMode = false;
+      selectedPostIds.clear();
+    });
+  }
+
+  Future<void> deleteSelectedPosts() async {
+    if (selectedPostIds.isEmpty) return;
+
+    final ids = selectedPostIds.toList();
+
+    for (final id in ids) {
+      await _firestoreService.moveToTrash(id);
+    }
+
+    clearSelection();
+    await loadPosts();
+
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('${ids.length}개를 휴지통으로 이동했습니다.'),
+        duration: const Duration(seconds: 2),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 
   Future<void> toggleReadStatus(String id, bool currentValue) async {
@@ -150,6 +204,11 @@ class _ArchivePageState extends State<ArchivePage> {
   }
 
   void handleTabChange(int tab) {
+    if (isSelectionMode) {
+      clearSelection();
+      return;
+    }
+
     setState(() {
       activeTab = tab;
     });
@@ -217,7 +276,10 @@ class _ArchivePageState extends State<ArchivePage> {
     final url = (post['url'] ?? '').toString().trim();
 
     if (title.isNotEmpty) return title;
-    if (url.isNotEmpty) return url;
+    if (url.isNotEmpty && url != 'uploaded_image' && url != 'uploaded_file') {
+      return url;
+    }
+
     return '제목 없음';
   }
 
@@ -240,32 +302,115 @@ class _ArchivePageState extends State<ArchivePage> {
   }
 
   bool isNumberedLine(String line) {
-    final numbers = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩'];
+    final numbers = [
+      '①',
+      '②',
+      '③',
+      '④',
+      '⑤',
+      '⑥',
+      '⑦',
+      '⑧',
+      '⑨',
+      '⑩',
+      '⑪',
+      '⑫',
+      '⑬',
+      '⑭',
+      '⑮',
+      '⑯',
+      '⑰',
+      '⑱',
+      '⑲',
+      '⑳',
+    ];
+
     return numbers.any((number) => line.trim().startsWith(number));
   }
 
-  List<String> getSummaryLines(Map<String, dynamic> post) {
-    final summary = (post['summary'] ?? '').toString().trim();
-    final url = (post['url'] ?? '').toString().trim();
+  bool isSectionTitleLine(String line) {
+    return RegExp(r'^\d+\)\s+').hasMatch(line.trim());
+  }
 
-    if (summary.isNotEmpty) {
-      return summary
-          .split('\n')
-          .map((e) => e.trim())
-          .where((e) => e.isNotEmpty)
-          .map((e) {
-            if (isNumberedLine(e)) {
-              return e;
-            }
+  bool isDashLine(String line) {
+    return line.trim().startsWith('-');
+  }
 
-            return e.replaceFirst(RegExp(r'^[•\-\*\.·]+\s*'), '');
-          })
-          .where((e) => e.isNotEmpty)
-          .take(3)
-          .toList();
+  String cleanPreviewLine(String line) {
+    var cleaned = line.trim();
+
+    cleaned = cleaned.replaceFirst(RegExp(r'^[•●▪▫]\s*'), '');
+
+    if (cleaned.startsWith('-')) {
+      cleaned = '- ${cleaned.substring(1).trim()}';
     }
 
-    if (url.isNotEmpty) {
+    if (cleaned.contains('▶')) {
+      cleaned = cleaned.split('▶').first.trim();
+    }
+
+    if (cleaned.contains('➔')) {
+      cleaned = cleaned.split('➔').first.trim();
+    }
+
+    if (cleaned.contains('→')) {
+      cleaned = cleaned.split('→').first.trim();
+    }
+
+    if (cleaned.contains(':') && cleaned.startsWith('-')) {
+      final parts = cleaned.split(':');
+      if (parts.first.trim().length <= 20) {
+        cleaned = parts.first.trim();
+      }
+    }
+
+    return cleaned.trim();
+  }
+
+  List<String> getSummaryLines(Map<String, dynamic> post) {
+    final shortSummary = (post['shortSummary'] ?? '').toString().trim();
+    final summary = (post['summary'] ?? '').toString().trim();
+    final detailSummary = (post['detailSummary'] ?? '').toString().trim();
+    final url = (post['url'] ?? '').toString().trim();
+
+    final sourceText = shortSummary.isNotEmpty
+        ? shortSummary
+        : summary.isNotEmpty
+            ? summary
+            : detailSummary;
+
+    if (sourceText.isNotEmpty) {
+      final rawLines = sourceText
+          .split('\n')
+          .map((e) => cleanPreviewLine(e))
+          .where((e) => e.isNotEmpty)
+          .where((e) => !e.contains('대한 내용입니다'))
+          .where((e) => !e.contains('나뉘어 있습니다'))
+          .toList();
+
+      final result = <String>[];
+
+      for (final line in rawLines) {
+        if (isSectionTitleLine(line)) {
+          result.add(line);
+          continue;
+        }
+
+        if (isDashLine(line)) {
+          result.add(line);
+        }
+
+        if (result.length >= 3) break;
+      }
+
+      if (result.isNotEmpty) {
+        return result.take(3).toList();
+      }
+
+      return rawLines.take(3).toList();
+    }
+
+    if (url.isNotEmpty && url != 'uploaded_image' && url != 'uploaded_file') {
       return [url];
     }
 
@@ -308,23 +453,25 @@ class _ArchivePageState extends State<ArchivePage> {
     final rawImageUrls = post['imageUrls'];
     if (rawImageUrls is List) {
       result.addAll(
-        rawImageUrls
-            .map((e) => e.toString().trim())
-            .where((e) => e.isNotEmpty),
+        rawImageUrls.map((e) => e.toString().trim()).where((e) {
+          return e.isNotEmpty && e != 'uploaded_image' && e != 'uploaded_file';
+        }),
       );
     }
 
     final rawImageUrlsSnake = post['image_urls'];
     if (rawImageUrlsSnake is List) {
       result.addAll(
-        rawImageUrlsSnake
-            .map((e) => e.toString().trim())
-            .where((e) => e.isNotEmpty),
+        rawImageUrlsSnake.map((e) => e.toString().trim()).where((e) {
+          return e.isNotEmpty && e != 'uploaded_image' && e != 'uploaded_file';
+        }),
       );
     }
 
     final thumbnail = (post['thumbnail'] ?? '').toString().trim();
-    if (thumbnail.isNotEmpty) {
+    if (thumbnail.isNotEmpty &&
+        thumbnail != 'uploaded_image' &&
+        thumbnail != 'uploaded_file') {
       result.add(thumbnail);
     }
 
@@ -370,80 +517,90 @@ class _ArchivePageState extends State<ArchivePage> {
     return mainCategoryNames[dynamicIndex];
   }
 
-  Widget buildThumbnail(String imageUrl) {
-    final fixedUrl = normalizeImageUrl(imageUrl);
+  Widget buildSelectionBar() {
+    if (!isSelectionMode) {
+      return const SizedBox.shrink();
+    }
 
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(18),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
       child: Container(
-        width: 116,
-        height: 116,
-        color: const Color(0xFFF3F4F4),
-        child: Image.network(
-          fixedUrl,
-          fit: BoxFit.cover,
-          errorBuilder: (context, error, stackTrace) {
-            return const Center(
-              child: Icon(
-                Icons.image_not_supported_outlined,
-                size: 32,
-                color: AppColors.textDisabled,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(18),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x12000000),
+              blurRadius: 10,
+              offset: Offset(0, 3),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Text(
+              '${selectedPostIds.length}개 선택됨',
+              style: const TextStyle(
+                fontWeight: FontWeight.w700,
+                color: AppColors.charcoal,
               ),
-            );
-          },
+            ),
+            const Spacer(),
+            TextButton(
+              onPressed: clearSelection,
+              child: const Text('취소'),
+            ),
+            TextButton.icon(
+              onPressed: deleteSelectedPosts,
+              icon: const Icon(Icons.delete_outline),
+              label: const Text('삭제'),
+              style: TextButton.styleFrom(
+                foregroundColor: Colors.redAccent,
+              ),
+            ),
+          ],
         ),
       ),
     );
   }
 
+  Widget buildThumbnail(String imageUrl) {
+    final fixedUrl = normalizeImageUrl(imageUrl);
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(18),
+      child: Image.network(
+        fixedUrl,
+        width: 116,
+        height: 116,
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) {
+          return const SizedBox.shrink();
+        },
+      ),
+    );
+  }
+
   Widget buildSummaryLine(String line, {double height = 1.6}) {
-    final trimmed = line.trim();
+    final trimmed = cleanPreviewLine(line);
 
-    if (isNumberedLine(trimmed)) {
-      return Padding(
-        padding: const EdgeInsets.only(bottom: 8),
-        child: Align(
-          alignment: Alignment.centerLeft,
-          child: Text(
-            trimmed,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: 14,
-              height: height,
-              fontWeight: FontWeight.w500,
-              color: AppColors.charcoal,
-            ),
-          ),
-        ),
-      );
+    if (trimmed.isEmpty) {
+      return const SizedBox.shrink();
     }
-
-    final cleaned = trimmed.replaceFirst(RegExp(r'^[•\-\*\.·]+\s*'), '');
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            '• ',
-            style: TextStyle(fontSize: 14),
-          ),
-          Expanded(
-            child: Text(
-              cleaned,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 14,
-                height: height,
-                fontWeight: FontWeight.w500,
-                color: AppColors.charcoal,
-              ),
-            ),
-          ),
-        ],
+      child: Text(
+        trimmed,
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          fontSize: 14,
+          height: height,
+          fontWeight: FontWeight.w500,
+          color: AppColors.charcoal,
+        ),
       ),
     );
   }
@@ -455,9 +612,7 @@ class _ArchivePageState extends State<ArchivePage> {
     if (imageUrls.isEmpty) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: summaryLines
-            .map((line) => buildSummaryLine(line))
-            .toList(),
+        children: summaryLines.map((line) => buildSummaryLine(line)).toList(),
       );
     }
 
@@ -483,6 +638,9 @@ class _ArchivePageState extends State<ArchivePage> {
     final filteredPosts = posts.where((post) {
       final title = (post['title'] ?? '').toString().toLowerCase();
       final summary = (post['summary'] ?? '').toString().toLowerCase();
+      final shortSummary = (post['shortSummary'] ?? '').toString().toLowerCase();
+      final detailSummary =
+          (post['detailSummary'] ?? '').toString().toLowerCase();
       final url = (post['url'] ?? '').toString().toLowerCase();
       final query = searchQuery.toLowerCase();
       final isFavorite = post['isFavorite'] ?? false;
@@ -498,6 +656,8 @@ class _ArchivePageState extends State<ArchivePage> {
 
       final matchesSearch = title.contains(query) ||
           summary.contains(query) ||
+          shortSummary.contains(query) ||
+          detailSummary.contains(query) ||
           url.contains(query) ||
           categoryText.contains(query) ||
           memo.contains(query) ||
@@ -555,11 +715,16 @@ class _ArchivePageState extends State<ArchivePage> {
             CategoryTabs(
               value: categoryTab,
               onChange: (newValue) {
+                if (isSelectionMode) {
+                  clearSelection();
+                }
+
                 setState(() {
                   categoryTab = newValue;
                 });
               },
             ),
+            buildSelectionBar(),
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
               child: Row(
@@ -574,11 +739,14 @@ class _ArchivePageState extends State<ArchivePage> {
                   ),
                   const Spacer(),
                   GestureDetector(
-                    onTap: () {
-                      setState(() {
-                        sortOrder = sortOrder == 'recent' ? 'oldest' : 'recent';
-                      });
-                    },
+                    onTap: isSelectionMode
+                        ? null
+                        : () {
+                            setState(() {
+                              sortOrder =
+                                  sortOrder == 'recent' ? 'oldest' : 'recent';
+                            });
+                          },
                     child: Container(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 16,
@@ -636,6 +804,9 @@ class _ArchivePageState extends State<ArchivePage> {
                             final bool isRead = post['isRead'] ?? false;
                             final bool isFavorite = post['isFavorite'] ?? false;
                             final bool isPinned = post['isPinned'] ?? false;
+                            final bool isSelected =
+                                selectedPostIds.contains(id);
+
                             final String category = getEffectiveCategory(post);
                             final String dateText =
                                 formatDate(post['createdAt']);
@@ -645,12 +816,22 @@ class _ArchivePageState extends State<ArchivePage> {
                             final List<String> tags = getTags(post);
                             final List<String> imageUrls = getImageUrls(post);
 
-                            final Color cardBackgroundColor = isRead
-                                ? const Color(0xFFF6F6F6)
-                                : AppColors.surface;
+                            final Color cardBackgroundColor = isSelected
+                                ? const Color(0xFFFFF2EE)
+                                : isRead
+                                    ? const Color(0xFFF6F6F6)
+                                    : AppColors.surface;
 
                             return GestureDetector(
+                              onLongPress: () {
+                                startSelection(id);
+                              },
                               onTap: () {
+                                if (isSelectionMode) {
+                                  toggleSelection(id);
+                                  return;
+                                }
+
                                 Navigator.pushNamed(
                                   context,
                                   AppRoutes.post,
@@ -661,6 +842,12 @@ class _ArchivePageState extends State<ArchivePage> {
                                 decoration: BoxDecoration(
                                   color: cardBackgroundColor,
                                   borderRadius: BorderRadius.circular(28),
+                                  border: Border.all(
+                                    color: isSelected
+                                        ? AppColors.peachDust
+                                        : Colors.transparent,
+                                    width: 1.5,
+                                  ),
                                   boxShadow: const [
                                     BoxShadow(
                                       color: Color(0x14000000),
@@ -676,6 +863,21 @@ class _ArchivePageState extends State<ArchivePage> {
                                   children: [
                                     Row(
                                       children: [
+                                        if (isSelectionMode) ...[
+                                          GestureDetector(
+                                            onTap: () => toggleSelection(id),
+                                            child: Icon(
+                                              isSelected
+                                                  ? Icons.check_circle
+                                                  : Icons.radio_button_unchecked,
+                                              size: 24,
+                                              color: isSelected
+                                                  ? AppColors.peachDust
+                                                  : AppColors.textDisabled,
+                                            ),
+                                          ),
+                                          const SizedBox(width: 10),
+                                        ],
                                         Container(
                                           padding: const EdgeInsets.symmetric(
                                             horizontal: 14,
@@ -705,84 +907,90 @@ class _ArchivePageState extends State<ArchivePage> {
                                             fontWeight: FontWeight.w600,
                                           ),
                                         ),
-                                        if (isPinned) ...[
-                                          const SizedBox(width: 8),
-                                          const Icon(
-                                            Icons.push_pin,
-                                            size: 18,
-                                            color: AppColors.peachDust,
-                                          ),
-                                        ],
-                                        const SizedBox(width: 8),
-                                        GestureDetector(
-                                          onTap: () async {
-                                            await toggleReadStatus(id, isRead);
-                                          },
-                                          child: Icon(
-                                            isRead
-                                                ? Icons.check_circle
-                                                : Icons.check_circle_outline,
-                                            size: 22,
-                                            color: isRead
-                                                ? const Color(0xFF95DDB4)
-                                                : AppColors.textDisabled,
-                                          ),
-                                        ),
-                                        const SizedBox(width: 8),
-                                        GestureDetector(
-                                          onTap: () async {
-                                            await toggleFavoriteStatus(
-                                              id,
-                                              isFavorite,
-                                            );
-                                          },
-                                          child: Icon(
-                                            isFavorite
-                                                ? Icons.star
-                                                : Icons.star_border,
-                                            size: 22,
-                                            color: isFavorite
-                                                ? Colors.amber
-                                                : AppColors.textDisabled,
-                                          ),
-                                        ),
-                                        const SizedBox(width: 4),
-                                        PopupMenuButton<String>(
-                                          icon: const Icon(
-                                            Icons.more_horiz,
-                                            color: AppColors.textDisabled,
-                                          ),
-                                          onSelected: (value) async {
-                                            if (value == 'pin') {
-                                              await togglePinnedStatus(
-                                                id,
-                                                isPinned,
-                                              );
-                                            } else if (value == 'collection') {
-                                              await moveToCollection(id);
-                                            } else if (value == 'delete') {
-                                              await showDeleteDialog(id);
-                                            }
-                                          },
-                                          itemBuilder: (context) => [
-                                            PopupMenuItem(
-                                              value: 'pin',
-                                              child: Text(
-                                                isPinned
-                                                    ? '고정 해제'
-                                                    : '홈에 고정',
-                                              ),
-                                            ),
-                                            const PopupMenuItem(
-                                              value: 'collection',
-                                              child: Text('컬렉션으로 이동'),
-                                            ),
-                                            const PopupMenuItem(
-                                              value: 'delete',
-                                              child: Text('휴지통으로 이동'),
+                                        if (!isSelectionMode) ...[
+                                          if (isPinned) ...[
+                                            const SizedBox(width: 8),
+                                            const Icon(
+                                              Icons.push_pin,
+                                              size: 18,
+                                              color: AppColors.peachDust,
                                             ),
                                           ],
-                                        ),
+                                          const SizedBox(width: 8),
+                                          GestureDetector(
+                                            onTap: () async {
+                                              await toggleReadStatus(
+                                                id,
+                                                isRead,
+                                              );
+                                            },
+                                            child: Icon(
+                                              isRead
+                                                  ? Icons.check_circle
+                                                  : Icons.check_circle_outline,
+                                              size: 22,
+                                              color: isRead
+                                                  ? const Color(0xFF95DDB4)
+                                                  : AppColors.textDisabled,
+                                            ),
+                                          ),
+                                          const SizedBox(width: 8),
+                                          GestureDetector(
+                                            onTap: () async {
+                                              await toggleFavoriteStatus(
+                                                id,
+                                                isFavorite,
+                                              );
+                                            },
+                                            child: Icon(
+                                              isFavorite
+                                                  ? Icons.star
+                                                  : Icons.star_border,
+                                              size: 22,
+                                              color: isFavorite
+                                                  ? Colors.amber
+                                                  : AppColors.textDisabled,
+                                            ),
+                                          ),
+                                          const SizedBox(width: 4),
+                                          PopupMenuButton<String>(
+                                            icon: const Icon(
+                                              Icons.more_horiz,
+                                              color: AppColors.textDisabled,
+                                            ),
+                                            onSelected: (value) async {
+                                              if (value == 'pin') {
+                                                await togglePinnedStatus(
+                                                  id,
+                                                  isPinned,
+                                                );
+                                              } else if (value ==
+                                                  'collection') {
+                                                await moveToCollection(id);
+                                              } else if (value == 'delete') {
+                                                await showDeleteDialog(id);
+                                              }
+                                            },
+                                            itemBuilder: (context) => [
+                                              PopupMenuItem(
+                                                value: 'pin',
+                                                child: Text(
+                                                  isPinned
+                                                      ? '고정 해제'
+                                                      : '홈에 고정',
+                                                ),
+                                              ),
+                                              const PopupMenuItem(
+                                                value: 'collection',
+                                                child: Text('컬렉션으로 이동'),
+                                              ),
+                                              const PopupMenuItem(
+                                                value: 'delete',
+                                                child: Text('휴지통으로 이동'),
+                                              ),
+                                            ],
+                                          ),
+                                        ],
                                       ],
                                     ),
                                     const SizedBox(height: 18),
@@ -830,7 +1038,8 @@ class _ArchivePageState extends State<ArchivePage> {
                                                     fontSize: 12,
                                                     color: AppColors
                                                         .textSecondary,
-                                                    fontWeight: FontWeight.w500,
+                                                    fontWeight:
+                                                        FontWeight.w500,
                                                   ),
                                                 ),
                                               );
@@ -838,24 +1047,27 @@ class _ArchivePageState extends State<ArchivePage> {
                                           ),
                                         ),
                                         const SizedBox(width: 8),
-                                        const Row(
-                                          children: [
-                                            Text(
-                                              '상세 보기',
-                                              style: TextStyle(
-                                                fontSize: 14,
-                                                color: AppColors.textSecondary,
-                                                fontWeight: FontWeight.w500,
+                                        if (!isSelectionMode)
+                                          const Row(
+                                            children: [
+                                              Text(
+                                                '상세 보기',
+                                                style: TextStyle(
+                                                  fontSize: 14,
+                                                  color:
+                                                      AppColors.textSecondary,
+                                                  fontWeight: FontWeight.w500,
+                                                ),
                                               ),
-                                            ),
-                                            SizedBox(width: 4),
-                                            Icon(
-                                              Icons.arrow_forward,
-                                              size: 16,
-                                              color: AppColors.textSecondary,
-                                            ),
-                                          ],
-                                        ),
+                                              SizedBox(width: 4),
+                                              Icon(
+                                                Icons.arrow_forward,
+                                                size: 16,
+                                                color:
+                                                    AppColors.textSecondary,
+                                              ),
+                                            ],
+                                          ),
                                       ],
                                     ),
                                   ],

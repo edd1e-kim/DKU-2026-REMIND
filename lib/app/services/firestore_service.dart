@@ -41,14 +41,22 @@ class FirestoreService {
     String status = 'ACTIVE',
     String originalText = '',
     List<String> imageUrls = const [],
+    String sourceType = 'link',
+    String shortSummary = '',
+    String detailSummary = '',
   }) async {
     final userId = _currentUserId;
+
+    final savedDetailSummary =
+        detailSummary.trim().isNotEmpty ? detailSummary.trim() : summary.trim();
 
     final docRef = await _db.collection('posts').add({
       'userId': userId,
       'url': url,
       'title': title,
       'summary': summary,
+      'shortSummary': shortSummary,
+      'detailSummary': savedDetailSummary,
       'tags': tags,
       'category': category,
       'thumbnail': thumbnail,
@@ -56,6 +64,8 @@ class FirestoreService {
       'memo': '',
       'originalText': originalText,
       'imageUrls': imageUrls,
+      'sourceType': sourceType,
+      'imageCount': imageUrls.length,
       'isRead': false,
       'isFavorite': false,
       'isPinned': false,
@@ -68,6 +78,91 @@ class FirestoreService {
     return docRef.id;
   }
 
+  Future<List<String>> addGroupedImagePosts({
+    required List<Map<String, dynamic>> groups,
+    required List<String> imageUrls,
+  }) async {
+    final userId = _currentUserId;
+    final batch = _db.batch();
+    final List<String> createdIds = [];
+
+    for (final group in groups) {
+      final docRef = _db.collection('posts').doc();
+      createdIds.add(docRef.id);
+
+      final rawIndexes = group['imageIndexes'];
+      final List<int> imageIndexes = rawIndexes is List
+          ? rawIndexes
+              .map((e) => int.tryParse(e.toString()))
+              .whereType<int>()
+              .toList()
+          : <int>[];
+
+      final List<String> groupImageUrls = imageIndexes.isEmpty
+          ? imageUrls
+          : imageIndexes
+              .where((index) => index >= 0 && index < imageUrls.length)
+              .map((index) => imageUrls[index])
+              .toList();
+
+      final String summary = (group['summary'] ?? '').toString();
+      final String shortSummary = (group['shortSummary'] ?? '').toString();
+      final String detailSummary =
+          (group['detailSummary'] ?? summary).toString();
+
+      batch.set(docRef, {
+        'userId': userId,
+        'url': (group['url'] ?? 'uploaded_image').toString(),
+        'title': (group['title'] ?? '스크린샷 분석 결과').toString(),
+        'summary': summary,
+        'shortSummary': shortSummary,
+        'detailSummary':
+            detailSummary.trim().isNotEmpty ? detailSummary : summary,
+        'tags': _parseStringList(group['tags']),
+        'category': (group['category'] ?? '기타').toString(),
+        'thumbnail': groupImageUrls.isNotEmpty
+            ? groupImageUrls.first
+            : (group['thumbnail'] ?? '').toString(),
+        'status': (group['status'] ?? 'COMPLETED').toString(),
+        'memo': '',
+        'originalText': (group['originalText'] ?? '').toString(),
+        'imageUrls': groupImageUrls,
+        'sourceType': 'screenshots',
+        'imageCount': groupImageUrls.length,
+        'isRead': false,
+        'isFavorite': false,
+        'isPinned': false,
+        'isDeleted': false,
+        'isCollected': false,
+        'createdAt': FieldValue.serverTimestamp(),
+        'completedAt': null,
+      });
+    }
+
+    await batch.commit();
+
+    return createdIds;
+  }
+
+  List<String> _parseStringList(dynamic value) {
+    if (value is List) {
+      return value
+          .map((e) => e.toString().trim())
+          .where((e) => e.isNotEmpty)
+          .toList();
+    }
+
+    if (value is String && value.trim().isNotEmpty) {
+      return value
+          .split(',')
+          .map((e) => e.trim())
+          .where((e) => e.isNotEmpty)
+          .toList();
+    }
+
+    return <String>[];
+  }
+
   Future<void> updatePostAnalysis({
     required String id,
     required String url,
@@ -78,16 +173,35 @@ class FirestoreService {
     required String thumbnail,
     required String status,
     required String originalText,
+    String shortSummary = '',
+    String detailSummary = '',
   }) async {
+    final savedDetailSummary =
+        detailSummary.trim().isNotEmpty ? detailSummary.trim() : summary.trim();
+
     await _db.collection('posts').doc(id).update({
       'url': url,
       'title': title,
       'summary': summary,
+      'shortSummary': shortSummary,
+      'detailSummary': savedDetailSummary,
       'tags': tags,
       'category': category,
       'thumbnail': thumbnail,
       'status': status,
       'originalText': originalText,
+      'completedAt': status == 'COMPLETED' ? FieldValue.serverTimestamp() : null,
+    });
+  }
+
+  Future<void> updatePostImageUrls({
+    required String id,
+    required List<String> imageUrls,
+  }) async {
+    await _db.collection('posts').doc(id).update({
+      'imageUrls': imageUrls,
+      'imageCount': imageUrls.length,
+      'thumbnail': imageUrls.isNotEmpty ? imageUrls.first : '',
     });
   }
 
@@ -100,9 +214,14 @@ class FirestoreService {
         .get();
 
     final posts = snapshot.docs.map((doc) {
+      final data = doc.data();
+
       return {
         'id': doc.id,
-        ...doc.data(),
+        ...data,
+        'detailSummary':
+            (data['detailSummary'] ?? data['summary'] ?? '').toString(),
+        'shortSummary': (data['shortSummary'] ?? '').toString(),
       };
     }).toList();
 
@@ -131,6 +250,9 @@ class FirestoreService {
     return {
       'id': doc.id,
       ...data,
+      'detailSummary':
+          (data['detailSummary'] ?? data['summary'] ?? '').toString(),
+      'shortSummary': (data['shortSummary'] ?? '').toString(),
     };
   }
 
@@ -181,6 +303,20 @@ class FirestoreService {
   Future<void> updateSummary(String id, String summary) async {
     await _db.collection('posts').doc(id).update({
       'summary': summary,
+      'detailSummary': summary,
+    });
+  }
+
+  Future<void> updateDetailSummary(String id, String detailSummary) async {
+    await _db.collection('posts').doc(id).update({
+      'summary': detailSummary,
+      'detailSummary': detailSummary,
+    });
+  }
+
+  Future<void> updateShortSummary(String id, String shortSummary) async {
+    await _db.collection('posts').doc(id).update({
+      'shortSummary': shortSummary,
     });
   }
 
@@ -190,20 +326,34 @@ class FirestoreService {
     });
   }
 
+  Future<void> updatePostCategory(String id, String category) async {
+    await _db.collection('posts').doc(id).update({
+      'category': category,
+    });
+
+    await syncCategoryCounts();
+  }
+
   Future<void> moveToTrash(String id) async {
     await _db.collection('posts').doc(id).update({
       'isDeleted': true,
     });
+
+    await syncCategoryCounts();
   }
 
   Future<void> restoreFromTrash(String id) async {
     await _db.collection('posts').doc(id).update({
       'isDeleted': false,
     });
+
+    await syncCategoryCounts();
   }
 
   Future<void> deletePostPermanently(String id) async {
     await _db.collection('posts').doc(id).delete();
+
+    await syncCategoryCounts();
   }
 
   Future<void> seedDefaultCategoriesIfNeeded() async {
@@ -417,6 +567,8 @@ class FirestoreService {
 
   Future<void> deleteCategory(String id) async {
     await _db.collection('categories').doc(id).delete();
+
+    await syncCategoryCounts();
   }
 
   Future<void> updateCategoryMainStatus({
@@ -426,6 +578,8 @@ class FirestoreService {
     await _db.collection('categories').doc(id).update({
       'isMain': isMain,
     });
+
+    await syncCategoryCounts();
   }
 
   Future<void> updateCategorySortOrder({

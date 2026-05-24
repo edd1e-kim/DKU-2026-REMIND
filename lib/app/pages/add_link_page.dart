@@ -17,6 +17,8 @@ class AddLinkPage extends StatefulWidget {
 }
 
 class _AddLinkPageState extends State<AddLinkPage> {
+  static const int maxImageCount = 15;
+
   final TextEditingController urlController = TextEditingController();
 
   final FirestoreService _firestoreService = FirestoreService();
@@ -39,6 +41,19 @@ class _AddLinkPageState extends State<AddLinkPage> {
     final images = await picker.pickMultiImage();
 
     if (images.isEmpty) return;
+
+    if (images.length > maxImageCount) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('스크린샷은 최대 15장까지 선택할 수 있어요.'),
+          duration: Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
 
     final bytesList = <Uint8List>[];
     final fileNames = <String>[];
@@ -80,6 +95,17 @@ class _AddLinkPageState extends State<AddLinkPage> {
       return;
     }
 
+    if (selectedImageBytesList.length > maxImageCount) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('스크린샷은 최대 15장까지 저장할 수 있어요.'),
+          duration: Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
     if (isSaving) return;
 
     setState(() {
@@ -90,39 +116,37 @@ class _AddLinkPageState extends State<AddLinkPage> {
       final imageBytesCopy = List<Uint8List>.from(selectedImageBytesList);
       final imageFileNamesCopy = List<String>.from(selectedImageFileNames);
 
-      List<String> imageUrls = [];
-
-      if (hasImages) {
-        imageUrls = await _analysisService.uploadImages(
-          imageBytesCopy,
-          imageFileNamesCopy,
-        );
-      }
-
       final docId = await _firestoreService.addPost(
         url: hasUrl ? inputUrl : 'uploaded_image',
-        title: 'AI 요약 분석 중',
-        summary: 'AI가 내용을 정리하고 있어요.',
+        title: hasImages ? '스크린샷 AI 분석 중' : 'AI 요약 분석 중',
+        summary: 'AI가 내용을 정리하고 있어요. 잠시 후 다시 확인해주세요.',
+        shortSummary: 'AI가 내용을 정리하고 있어요.',
+        detailSummary: 'AI가 내용을 정리하고 있어요. 잠시 후 다시 확인해주세요.',
         tags: hasImages ? ['이미지'] : ['링크'],
         category: '기타',
         thumbnail: '',
         status: 'ANALYZING',
         originalText: '',
-        imageUrls: imageUrls,
+        imageUrls: const [],
+        sourceType: hasImages && hasUrl
+            ? 'complex'
+            : hasImages
+                ? 'screenshots'
+                : 'link',
       );
 
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('저장되었어요. AI 요약을 분석하고 있어요.'),
+          content: Text('저장되었어요. AI가 분석 중입니다.'),
           duration: Duration(seconds: 2),
           behavior: SnackBarBehavior.floating,
         ),
       );
 
       Future.microtask(() {
-        _analyzeAndUpdatePost(
+        _uploadAnalyzeAndUpdatePost(
           docId: docId,
           inputUrl: inputUrl,
           imageBytesList: imageBytesCopy,
@@ -152,15 +176,108 @@ class _AddLinkPageState extends State<AddLinkPage> {
     }
   }
 
-  Future<void> _analyzeAndUpdatePost({
+  Future<void> _uploadAnalyzeAndUpdatePost({
     required String docId,
     required String inputUrl,
     required List<Uint8List> imageBytesList,
     required List<String> imageFileNames,
   }) async {
+    final bool hasUrl = inputUrl.trim().isNotEmpty;
+    final bool hasImages = imageBytesList.isNotEmpty;
+
     try {
-      final bool hasUrl = inputUrl.trim().isNotEmpty;
-      final bool hasImages = imageBytesList.isNotEmpty;
+      List<String> imageUrls = [];
+
+      if (hasImages) {
+        imageUrls = await _analysisService.uploadImages(
+          imageBytesList,
+          imageFileNames,
+        );
+
+        await _firestoreService.updatePostImageUrls(
+          id: docId,
+          imageUrls: imageUrls,
+        );
+      }
+
+      if (hasImages && !hasUrl) {
+        final groups = await _analysisService.analyzeImageGroups(
+          imageBytesList,
+          imageFileNames,
+        );
+
+        if (groups.isEmpty) {
+          throw Exception('이미지 그룹 분석 결과가 없습니다.');
+        }
+
+        final firstGroup = groups.first;
+        final firstGroupSummary = (firstGroup['summary'] ?? '').toString();
+        final firstGroupShortSummary =
+            (firstGroup['shortSummary'] ?? '').toString();
+        final firstGroupDetailSummary =
+            (firstGroup['detailSummary'] ?? firstGroupSummary).toString();
+
+        final firstGroupImageUrls = _getGroupImageUrls(
+          firstGroup,
+          imageUrls,
+        );
+
+        await _firestoreService.updatePostImageUrls(
+          id: docId,
+          imageUrls: firstGroupImageUrls,
+        );
+
+        await _firestoreService.updatePostAnalysis(
+          id: docId,
+          url: (firstGroup['url'] ?? 'uploaded_image').toString(),
+          title: (firstGroup['title'] ?? '스크린샷 분석 결과').toString(),
+          summary: firstGroupSummary,
+          shortSummary: firstGroupShortSummary,
+          detailSummary: firstGroupDetailSummary,
+          tags: _safeTags(
+            _parseStringList(firstGroup['tags']),
+            hasImages: true,
+          ),
+          category: (firstGroup['category'] ?? '기타').toString(),
+          thumbnail:
+              firstGroupImageUrls.isNotEmpty ? firstGroupImageUrls.first : '',
+          status: 'COMPLETED',
+          originalText: (firstGroup['originalText'] ?? '').toString(),
+        );
+
+        for (int i = 1; i < groups.length; i++) {
+          final group = groups[i];
+          final groupSummary = (group['summary'] ?? '').toString();
+          final groupShortSummary = (group['shortSummary'] ?? '').toString();
+          final groupDetailSummary =
+              (group['detailSummary'] ?? groupSummary).toString();
+
+          final groupImageUrls = _getGroupImageUrls(
+            group,
+            imageUrls,
+          );
+
+          await _firestoreService.addPost(
+            url: (group['url'] ?? 'uploaded_image').toString(),
+            title: (group['title'] ?? '스크린샷 분석 결과').toString(),
+            summary: groupSummary,
+            shortSummary: groupShortSummary,
+            detailSummary: groupDetailSummary,
+            tags: _safeTags(
+              _parseStringList(group['tags']),
+              hasImages: true,
+            ),
+            category: (group['category'] ?? '기타').toString(),
+            thumbnail: groupImageUrls.isNotEmpty ? groupImageUrls.first : '',
+            status: 'COMPLETED',
+            originalText: (group['originalText'] ?? '').toString(),
+            imageUrls: groupImageUrls,
+            sourceType: 'screenshots',
+          );
+        }
+
+        return;
+      }
 
       Map<String, dynamic> analyzedData;
 
@@ -170,25 +287,31 @@ class _AddLinkPageState extends State<AddLinkPage> {
           imageBytesList: imageBytesList,
           fileNames: imageFileNames,
         );
-      } else if (hasImages) {
-        analyzedData = await _analysisService.analyzeImageFiles(
-          imageBytesList,
-          imageFileNames,
-        );
       } else {
         analyzedData = await _analysisService.analyzeUrl(inputUrl.trim());
       }
+
+      final analyzedSummary = (analyzedData['summary'] ?? '').toString();
+      final analyzedShortSummary =
+          (analyzedData['shortSummary'] ?? '').toString();
+      final analyzedDetailSummary =
+          (analyzedData['detailSummary'] ?? analyzedSummary).toString();
 
       await _firestoreService.updatePostAnalysis(
         id: docId,
         url: (analyzedData['url'] ?? inputUrl).toString(),
         title: (analyzedData['title'] ?? '제목 없음').toString(),
-        summary: (analyzedData['summary'] ?? '').toString(),
-        tags: (analyzedData['tags'] as List<dynamic>? ?? [])
-            .map((e) => e.toString())
-            .toList(),
+        summary: analyzedSummary,
+        shortSummary: analyzedShortSummary,
+        detailSummary: analyzedDetailSummary,
+        tags: _safeTags(
+          _parseStringList(analyzedData['tags']),
+          hasImages: hasImages,
+        ),
         category: (analyzedData['category'] ?? '기타').toString(),
-        thumbnail: (analyzedData['thumbnail'] ?? '').toString(),
+        thumbnail: imageUrls.isNotEmpty
+            ? imageUrls.first
+            : (analyzedData['thumbnail'] ?? '').toString(),
         status: 'COMPLETED',
         originalText: (analyzedData['originalText'] ?? '').toString(),
       );
@@ -198,13 +321,83 @@ class _AddLinkPageState extends State<AddLinkPage> {
         url: inputUrl.trim().isNotEmpty ? inputUrl.trim() : 'uploaded_image',
         title: 'AI 요약 실패',
         summary: 'AI 요약에 실패했습니다. 원본은 저장되었습니다.',
-        tags: const ['분석실패'],
+        shortSummary: 'AI 요약에 실패했습니다.',
+        detailSummary: 'AI 요약에 실패했습니다. 원본은 저장되었습니다.',
+        tags: hasImages ? const ['이미지'] : const ['링크'],
         category: '기타',
         thumbnail: '',
         status: 'FAILED',
         originalText: e.toString(),
       );
     }
+  }
+
+  List<String> _parseStringList(dynamic value) {
+    if (value is List) {
+      return value
+          .map((e) => e.toString().trim())
+          .where((e) => e.isNotEmpty)
+          .toList();
+    }
+
+    if (value is String && value.trim().isNotEmpty) {
+      return value
+          .split(',')
+          .map((e) => e.trim())
+          .where((e) => e.isNotEmpty)
+          .toList();
+    }
+
+    return <String>[];
+  }
+
+  List<String> _safeTags(
+    List<String> tags, {
+    required bool hasImages,
+  }) {
+    final blocked = {
+      '분석실패',
+      '실패',
+      '에러',
+      '오류',
+      '분석오류',
+      '요약실패',
+      '확인필요',
+    };
+
+    final cleaned = tags
+        .map((e) => e.replaceAll('#', '').trim())
+        .where((e) => e.isNotEmpty)
+        .where((e) => !blocked.contains(e))
+        .take(3)
+        .toList();
+
+    if (cleaned.isNotEmpty) return cleaned;
+
+    return hasImages ? ['이미지'] : ['링크'];
+  }
+
+  List<String> _getGroupImageUrls(
+    Map<String, dynamic> group,
+    List<String> allImageUrls,
+  ) {
+    final rawIndexes = group['imageIndexes'];
+
+    if (rawIndexes is! List) {
+      return allImageUrls;
+    }
+
+    final indexes = rawIndexes
+        .map((e) => int.tryParse(e.toString()))
+        .whereType<int>()
+        .where((index) => index >= 0 && index < allImageUrls.length)
+        .toList();
+
+    if (indexes.isEmpty) {
+      return allImageUrls;
+    }
+
+    return indexes.map((index) => allImageUrls[index]).toList();
   }
 
   Widget buildSelectedImageList() {
@@ -215,6 +408,18 @@ class _AddLinkPageState extends State<AddLinkPage> {
     return Column(
       children: [
         const SizedBox(height: 16),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: Text(
+            '선택된 스크린샷 ${selectedImageFileNames.length}/$maxImageCount장',
+            style: const TextStyle(
+              fontSize: 13,
+              color: AppColors.textSecondary,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+        const SizedBox(height: 10),
         ...List.generate(selectedImageFileNames.length, (index) {
           final name = selectedImageFileNames[index];
 
@@ -300,7 +505,7 @@ class _AddLinkPageState extends State<AddLinkPage> {
                 ),
                 SizedBox(height: 8),
                 Text(
-                  '링크만 또는 사진만 올려도 괜찮아요',
+                  '스크린샷 여러 장도 AI가 주제별로 정리해드려요',
                   style: TextStyle(
                     color: AppColors.textSecondary,
                     fontSize: 14,
@@ -314,6 +519,7 @@ class _AddLinkPageState extends State<AddLinkPage> {
       ),
     );
   }
+
   @override
   Widget build(BuildContext context) {
     final inputUrl = urlController.text.trim();
@@ -396,7 +602,7 @@ class _AddLinkPageState extends State<AddLinkPage> {
           ),
           const SizedBox(height: 8),
           const Text(
-            '원본 이동용 링크를 넣어주세요.',
+            '링크와 사진을 같이 넣으면 하나의 카드로 통합 분석됩니다.',
             style: TextStyle(
               color: AppColors.textSecondary,
               fontSize: 13,
@@ -404,7 +610,7 @@ class _AddLinkPageState extends State<AddLinkPage> {
           ),
           const SizedBox(height: 28),
           const Text(
-            '사진 추가',
+            '스크린샷 추가',
             style: TextStyle(
               fontWeight: FontWeight.w700,
               color: AppColors.charcoal,
@@ -432,11 +638,22 @@ class _AddLinkPageState extends State<AddLinkPage> {
                 ),
                 const SizedBox(height: 12),
                 const Text(
-                  '캡션이 부족할 때 참고 이미지를 추가해보세요',
+                  '서로 다른 주제의 스크린샷도 괜찮아요\nAI가 주제별로 나눠 정리해요',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     color: AppColors.textSecondary,
                     fontSize: 14,
+                    height: 1.5,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  '최대 15장까지 한 번에 올릴 수 있어요',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: AppColors.textSecondary,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
                     height: 1.5,
                   ),
                 ),
@@ -450,7 +667,7 @@ class _AddLinkPageState extends State<AddLinkPage> {
                       borderRadius: BorderRadius.circular(14),
                     ),
                   ),
-                  child: const Text('사진 선택'),
+                  child: const Text('사진 여러 장 선택'),
                 ),
                 buildSelectedImageList(),
               ],
@@ -458,10 +675,11 @@ class _AddLinkPageState extends State<AddLinkPage> {
           ),
           const SizedBox(height: 14),
           const Text(
-            '링크, 사진 중 하나 이상만 있으면 저장할 수 있어요.',
+            '저장하면 먼저 아카이브로 이동하고, AI가 뒤에서 분석해요. 이미지가 많으면 분석 시간이 조금 걸릴 수 있어요.',
             style: TextStyle(
               color: AppColors.textSecondary,
               fontSize: 13,
+              height: 1.5,
             ),
           ),
           const SizedBox(height: 32),

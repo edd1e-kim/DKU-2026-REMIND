@@ -147,6 +147,59 @@ class AnalysisService {
     }
   }
 
+  Future<List<Map<String, dynamic>>> analyzeImageGroups(
+    List<Uint8List> imageBytesList,
+    List<String> fileNames,
+  ) async {
+    try {
+      final uri = Uri.parse('$baseUrl/analyze/image-groups');
+      final request = http.MultipartRequest('POST', uri);
+
+      for (int i = 0; i < imageBytesList.length; i++) {
+        request.files.add(
+          http.MultipartFile.fromBytes(
+            'files',
+            imageBytesList[i],
+            filename: fileNames[i],
+          ),
+        );
+      }
+
+      final streamedResponse = await request.send();
+      final response = await http.Response.fromStream(streamedResponse);
+
+      print('이미지 그룹 분석 상태코드: ${response.statusCode}');
+      print('이미지 그룹 분석 응답: ${utf8.decode(response.bodyBytes)}');
+
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+
+        final rawGroups = decoded['groups'];
+
+        if (rawGroups is List) {
+          return rawGroups.map((group) {
+            if (group is Map<String, dynamic>) {
+              return _normalizeGroupResult(group);
+            }
+
+            return _normalizeGroupResult({});
+          }).toList();
+        }
+
+        final fallback = _normalizeResult(
+          decoded,
+          fallbackUrl: 'uploaded_image',
+        );
+
+        return [fallback];
+      }
+
+      throw Exception('이미지 그룹 분석 실패: ${response.statusCode}');
+    } catch (e) {
+      throw Exception('이미지 그룹 분석 요청 실패: $e');
+    }
+  }
+
   Map<String, dynamic> _normalizeResult(
     Map<String, dynamic> decoded, {
     required String fallbackUrl,
@@ -158,12 +211,31 @@ class AnalysisService {
       'category': (decoded['category'] ?? '기타').toString(),
       'tags': _parseTags(decoded['tags']),
       'thumbnail': (decoded['thumbnail'] ?? '').toString(),
-      'status': 'COMPLETED',
+      'status': (decoded['status'] ?? 'COMPLETED').toString(),
       'originalText': (decoded['originalText'] ??
               decoded['original_text'] ??
               decoded['content'] ??
               '')
           .toString(),
+      'imageIndexes': _parseIntList(decoded['imageIndexes']),
+    };
+  }
+
+  Map<String, dynamic> _normalizeGroupResult(Map<String, dynamic> decoded) {
+    return {
+      'url': (decoded['url'] ?? 'uploaded_image').toString(),
+      'title': (decoded['title'] ?? '스크린샷 분석 결과').toString(),
+      'summary': (decoded['summary'] ?? '').toString(),
+      'category': (decoded['category'] ?? '기타').toString(),
+      'tags': _parseTags(decoded['tags']),
+      'thumbnail': (decoded['thumbnail'] ?? '').toString(),
+      'status': (decoded['status'] ?? 'COMPLETED').toString(),
+      'originalText': (decoded['originalText'] ??
+              decoded['original_text'] ??
+              decoded['content'] ??
+              '')
+          .toString(),
+      'imageIndexes': _parseIntList(decoded['imageIndexes']),
     };
   }
 
@@ -184,5 +256,16 @@ class AnalysisService {
     }
 
     return <String>[];
+  }
+
+  List<int> _parseIntList(dynamic rawList) {
+    if (rawList is List) {
+      return rawList
+          .map((e) => int.tryParse(e.toString()))
+          .whereType<int>()
+          .toList();
+    }
+
+    return <int>[];
   }
 }
