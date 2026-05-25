@@ -31,6 +31,51 @@ class FirestoreService {
     }
   }
 
+  String _cleanCategoryText(String value) {
+    return value.replaceAll('#', '').trim();
+  }
+
+  Future<String> resolveCategoryFromExisting({
+    required String aiCategory,
+    required List<String> tags,
+    String title = '',
+    String summary = '',
+  }) async {
+    final categories = await getCategories();
+
+    final existingNames = categories
+        .map((e) => (e['name'] ?? '').toString().trim())
+        .where((name) => name.isNotEmpty)
+        .toSet();
+
+    if (existingNames.isEmpty) {
+      return '기타';
+    }
+
+    final cleanedAiCategory = _cleanCategoryText(aiCategory);
+
+    if (existingNames.contains(cleanedAiCategory)) {
+      return cleanedAiCategory;
+    }
+
+    final cleanedTags = tags
+        .map((e) => _cleanCategoryText(e.toString()))
+        .where((e) => e.isNotEmpty)
+        .toList();
+
+    for (final tag in cleanedTags) {
+      if (existingNames.contains(tag)) {
+        return tag;
+      }
+    }
+
+    if (existingNames.contains('기타')) {
+      return '기타';
+    }
+
+    return '기타';
+  }
+
   Future<String> addPost({
     required String url,
     required String title,
@@ -50,6 +95,13 @@ class FirestoreService {
     final savedDetailSummary =
         detailSummary.trim().isNotEmpty ? detailSummary.trim() : summary.trim();
 
+    final resolvedCategory = await resolveCategoryFromExisting(
+      aiCategory: category,
+      tags: tags,
+      title: title,
+      summary: summary,
+    );
+
     final docRef = await _db.collection('posts').add({
       'userId': userId,
       'url': url,
@@ -58,7 +110,7 @@ class FirestoreService {
       'shortSummary': shortSummary,
       'detailSummary': savedDetailSummary,
       'tags': tags,
-      'category': category,
+      'category': resolvedCategory,
       'thumbnail': thumbnail,
       'status': status,
       'memo': '',
@@ -74,6 +126,8 @@ class FirestoreService {
       'createdAt': FieldValue.serverTimestamp(),
       'completedAt': null,
     });
+
+    await syncCategoryCounts();
 
     return docRef.id;
   }
@@ -105,21 +159,31 @@ class FirestoreService {
               .map((index) => imageUrls[index])
               .toList();
 
+      final String title =
+          (group['title'] ?? '스크린샷 분석 결과').toString();
       final String summary = (group['summary'] ?? '').toString();
       final String shortSummary = (group['shortSummary'] ?? '').toString();
       final String detailSummary =
           (group['detailSummary'] ?? summary).toString();
+      final List<String> tags = _parseStringList(group['tags']);
+
+      final String resolvedCategory = await resolveCategoryFromExisting(
+        aiCategory: (group['category'] ?? '기타').toString(),
+        tags: tags,
+        title: title,
+        summary: summary,
+      );
 
       batch.set(docRef, {
         'userId': userId,
         'url': (group['url'] ?? 'uploaded_image').toString(),
-        'title': (group['title'] ?? '스크린샷 분석 결과').toString(),
+        'title': title,
         'summary': summary,
         'shortSummary': shortSummary,
         'detailSummary':
             detailSummary.trim().isNotEmpty ? detailSummary : summary,
-        'tags': _parseStringList(group['tags']),
-        'category': (group['category'] ?? '기타').toString(),
+        'tags': tags,
+        'category': resolvedCategory,
         'thumbnail': groupImageUrls.isNotEmpty
             ? groupImageUrls.first
             : (group['thumbnail'] ?? '').toString(),
@@ -140,6 +204,7 @@ class FirestoreService {
     }
 
     await batch.commit();
+    await syncCategoryCounts();
 
     return createdIds;
   }
@@ -179,6 +244,13 @@ class FirestoreService {
     final savedDetailSummary =
         detailSummary.trim().isNotEmpty ? detailSummary.trim() : summary.trim();
 
+    final resolvedCategory = await resolveCategoryFromExisting(
+      aiCategory: category,
+      tags: tags,
+      title: title,
+      summary: summary,
+    );
+
     await _db.collection('posts').doc(id).update({
       'url': url,
       'title': title,
@@ -186,12 +258,14 @@ class FirestoreService {
       'shortSummary': shortSummary,
       'detailSummary': savedDetailSummary,
       'tags': tags,
-      'category': category,
+      'category': resolvedCategory,
       'thumbnail': thumbnail,
       'status': status,
       'originalText': originalText,
       'completedAt': status == 'COMPLETED' ? FieldValue.serverTimestamp() : null,
     });
+
+    await syncCategoryCounts();
   }
 
   Future<void> updatePostImageUrls({
@@ -323,6 +397,12 @@ class FirestoreService {
   Future<void> updateMemo(String id, String memo) async {
     await _db.collection('posts').doc(id).update({
       'memo': memo,
+    });
+  }
+
+  Future<void> updateTitle(String id, String title) async {
+    await _db.collection('posts').doc(id).update({
+      'title': title,
     });
   }
 

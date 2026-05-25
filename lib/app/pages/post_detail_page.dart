@@ -21,24 +21,32 @@ class _PostDetailPageState extends State<PostDetailPage> {
   bool isLoading = true;
   bool isFavorite = false;
   bool isRead = false;
+  bool isEditingTitle = false;
   bool isEditingSummary = false;
   bool isOriginalExpanded = false;
   bool isCompactSummary = false;
+  bool isCategoryLoading = true;
 
   Map<String, dynamic>? post;
+  List<Map<String, dynamic>> categories = [];
+
+  late TextEditingController titleController;
   late TextEditingController summaryController;
   late TextEditingController memoController;
 
   @override
   void initState() {
     super.initState();
+    titleController = TextEditingController();
     summaryController = TextEditingController();
     memoController = TextEditingController();
     loadPost();
+    loadCategories();
   }
 
   @override
   void dispose() {
+    titleController.dispose();
     summaryController.dispose();
     memoController.dispose();
     super.dispose();
@@ -85,9 +93,34 @@ class _PostDetailPageState extends State<PostDetailPage> {
       isLoading = false;
       isFavorite = data?['isFavorite'] ?? false;
       isRead = data?['isRead'] ?? false;
+      titleController.text = (data?['title'] ?? '').toString();
       summaryController.text = detailSummary;
       memoController.text = (data?['memo'] ?? '').toString();
     });
+  }
+
+  Future<void> loadCategories() async {
+    final data = await _firestoreService.getCategories();
+
+    if (!mounted) return;
+
+    setState(() {
+      categories = data;
+      isCategoryLoading = false;
+    });
+  }
+
+  Future<List<Map<String, dynamic>>> refreshCategories() async {
+    final data = await _firestoreService.getCategories();
+
+    if (!mounted) return data;
+
+    setState(() {
+      categories = data;
+      isCategoryLoading = false;
+    });
+
+    return data;
   }
 
   Future<void> toggleFavorite() async {
@@ -201,6 +234,42 @@ class _PostDetailPageState extends State<PostDetailPage> {
     );
   }
 
+  Future<void> saveTitle() async {
+    if (post == null || !isAnalysisCompleted) return;
+
+    final id = post!['id'].toString();
+    final editedTitle = titleController.text.trim();
+
+    if (editedTitle.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('제목을 입력해 주세요.'),
+          duration: Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
+    await _firestoreService.updateTitle(id, editedTitle);
+
+    if (!mounted) return;
+
+    setState(() {
+      isEditingTitle = false;
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('제목을 저장했습니다.'),
+        duration: Duration(seconds: 2),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+
+    await loadPost();
+  }
+
   Future<void> saveSummary() async {
     if (post == null || !isAnalysisCompleted) return;
 
@@ -296,14 +365,43 @@ class _PostDetailPageState extends State<PostDetailPage> {
     }
   }
 
+  List<String> buildCategoryNames(List<Map<String, dynamic>> categoryData) {
+    final result = <String>[];
+    final seen = <String>{};
+
+    for (final item in categoryData) {
+      final name = (item['name'] ?? '').toString().trim();
+
+      if (name.isEmpty) continue;
+      if (seen.contains(name)) continue;
+
+      seen.add(name);
+      result.add(name);
+    }
+
+    final currentCategory = (post?['category'] ?? '').toString().trim();
+
+    if (currentCategory.isNotEmpty && !seen.contains(currentCategory)) {
+      result.add(currentCategory);
+      seen.add(currentCategory);
+    }
+
+    if (!seen.contains('기타')) {
+      result.add('기타');
+    }
+
+    return result;
+  }
+
   Future<void> showCategoryEditSheet() async {
     if (post == null || !isAnalysisCompleted) return;
 
-    final categories = await _firestoreService.getCategories();
+    final latestCategories = await refreshCategories();
 
     if (!mounted) return;
 
     final currentCategory = (post!['category'] ?? '기타').toString();
+    final categoryNames = buildCategoryNames(latestCategories);
 
     final selected = await showModalBottomSheet<String>(
       context: context,
@@ -312,16 +410,6 @@ class _PostDetailPageState extends State<PostDetailPage> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       builder: (context) {
-        final categoryNames = categories
-            .map((e) => (e['name'] ?? '').toString().trim())
-            .where((e) => e.isNotEmpty)
-            .toSet()
-            .toList();
-
-        if (!categoryNames.contains('기타')) {
-          categoryNames.add('기타');
-        }
-
         return SafeArea(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(20, 18, 20, 24),
@@ -348,6 +436,18 @@ class _PostDetailPageState extends State<PostDetailPage> {
                     ),
                   ),
                 ),
+                const SizedBox(height: 6),
+                const Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    '카테고리 관리에서 추가한 항목도 여기에 반영됩니다.',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: AppColors.textSecondary,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
                 const SizedBox(height: 14),
                 Flexible(
                   child: ListView.separated(
@@ -364,6 +464,7 @@ class _PostDetailPageState extends State<PostDetailPage> {
                           style: TextStyle(
                             fontWeight:
                                 isSelected ? FontWeight.w800 : FontWeight.w500,
+                            color: AppColors.charcoal,
                           ),
                         ),
                         trailing: isSelected
@@ -389,6 +490,7 @@ class _PostDetailPageState extends State<PostDetailPage> {
     final id = post!['id'].toString();
     await _firestoreService.updatePostCategory(id, selected);
     await loadPost();
+    await loadCategories();
 
     if (!mounted) return;
 
@@ -439,6 +541,18 @@ class _PostDetailPageState extends State<PostDetailPage> {
   }
 
   Color getCategoryChipColor(String category) {
+    for (final item in categories) {
+      final name = (item['name'] ?? '').toString().trim();
+
+      if (name != category) continue;
+
+      final rawColor = item['color'];
+
+      if (rawColor is int) {
+        return Color(rawColor).withOpacity(0.24);
+      }
+    }
+
     switch (category) {
       case '자기계발':
         return const Color.fromRGBO(200, 182, 255, 0.2);
@@ -448,6 +562,14 @@ class _PostDetailPageState extends State<PostDetailPage> {
         return const Color(0xFFE8E4F4);
       case '쇼핑':
         return const Color(0xFFF7E5D9);
+      case '다이어트':
+        return const Color(0xFFE6F5EF);
+      case '요리':
+        return const Color(0xFFFFF1D6);
+      case '투자':
+        return const Color(0xFFE8F0FA);
+      case '음악':
+        return const Color(0xFFF3E8FF);
       default:
         return const Color(0xFFF1F1F1);
     }
@@ -457,6 +579,13 @@ class _PostDetailPageState extends State<PostDetailPage> {
     var cleaned = line.trim();
 
     cleaned = cleaned.replaceFirst(RegExp(r'^[•●▪▫]\s*'), '');
+
+    cleaned = cleaned.replaceFirstMapped(
+      RegExp(r'^(\d+[\)\.]\s*)[○◯☐□]\s*'),
+      (match) => match.group(1) ?? '',
+    );
+
+    cleaned = cleaned.replaceFirst(RegExp(r'^[○◯☐□]\s*'), '');
 
     if (cleaned.startsWith('-')) {
       cleaned = '- ${cleaned.substring(1).trim()}';
@@ -484,7 +613,8 @@ class _PostDetailPageState extends State<PostDetailPage> {
       final parts = cleaned.split(':');
       final head = parts.first.trim();
 
-      if (cleaned.startsWith('-') || RegExp(r'^\d+[\)\.]\s+').hasMatch(cleaned)) {
+      if (cleaned.startsWith('-') ||
+          RegExp(r'^\d+[\)\.]\s+').hasMatch(cleaned)) {
         if (head.length <= 40) {
           cleaned = head;
         }
@@ -502,6 +632,72 @@ class _PostDetailPageState extends State<PostDetailPage> {
     return line.trim().startsWith('-');
   }
 
+  bool isDashSectionTitleLine(String line) {
+    final trimmed = cleanSummaryLineForDisplay(line);
+
+    if (!trimmed.startsWith('-')) return false;
+
+    final text = trimmed.replaceFirst(RegExp(r'^-\s*'), '').trim();
+
+    if (text.isEmpty) return false;
+    if (text.length > 35) return false;
+
+    return text.contains('루틴') ||
+        text.contains('식단') ||
+        text.contains('추천') ||
+        text.contains('기준') ||
+        text.contains('체크리스트') ||
+        text.contains('주의할 점');
+  }
+
+  String removeNumberPrefix(String line) {
+    return line.replaceFirst(RegExp(r'^\d+[\)\.]\s*'), '').trim();
+  }
+
+  List<String> normalizeSummaryLinesForDisplay(List<String> lines) {
+    final result = <String>[];
+
+    bool insideDashSection = false;
+    int sectionCount = 0;
+
+    for (final rawLine in lines) {
+      final line = cleanSummaryLineForDisplay(rawLine);
+
+      if (line.isEmpty) continue;
+
+      if (isDashSectionTitleLine(line)) {
+        sectionCount++;
+
+        final title = line.replaceFirst(RegExp(r'^-\s*'), '').trim();
+        result.add('$sectionCount) $title');
+
+        insideDashSection = true;
+        continue;
+      }
+
+      if (insideDashSection) {
+        if (RegExp(r'^\d+[\)\.]\s*').hasMatch(line)) {
+          final item = removeNumberPrefix(line);
+
+          if (item.isNotEmpty) {
+            result.add('- $item');
+          }
+
+          continue;
+        }
+
+        if (!line.startsWith('-') && !isSectionTitleLine(line)) {
+          result.add('- $line');
+          continue;
+        }
+      }
+
+      result.add(line);
+    }
+
+    return result;
+  }
+
   bool isIntroLine(String line) {
     final trimmed = line.trim();
 
@@ -513,13 +709,22 @@ class _PostDetailPageState extends State<PostDetailPage> {
   }
 
   List<String> getSummaryList(String summary) {
+    final title = ((post?['title'] ?? '').toString().trim().isNotEmpty)
+        ? (post?['title'] ?? '').toString().trim()
+        : '';
+
+    final titleLine = title.isNotEmpty ? '<$title>' : '';
+
     final lines = summary
         .split('\n')
         .map((e) => cleanSummaryLineForDisplay(e))
         .where((e) => e.isNotEmpty)
+        .where((e) => e != titleLine)
         .toList();
 
-    if (lines.isNotEmpty) return lines;
+    final normalizedLines = normalizeSummaryLinesForDisplay(lines);
+
+    if (normalizedLines.isNotEmpty) return normalizedLines;
 
     return ['요약 정보가 없습니다.'];
   }
@@ -1080,9 +1285,9 @@ class _PostDetailPageState extends State<PostDetailPage> {
     final originalText =
         ((post!['originalText'] ?? '').toString().trim().isNotEmpty)
             ? (post!['originalText'] ?? '').toString()
-            : ((post!['summary'] ?? '').toString().trim().isNotEmpty
+            : ((post!['summary'] ?? '').toString().trim().isNotEmpty)
                 ? (post!['summary'] ?? '').toString()
-                : rawUrl);
+                : rawUrl;
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -1176,18 +1381,85 @@ class _PostDetailPageState extends State<PostDetailPage> {
           ),
           buildDisabledNotice(),
           const SizedBox(height: 16),
-          Text(
-            title,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              fontWeight: FontWeight.w800,
-              fontSize: 24,
-              color: AppColors.charcoal,
-              height: 1.25,
-              letterSpacing: -0.5,
+          if (isEditingTitle)
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: titleController,
+                    autofocus: true,
+                    maxLines: 2,
+                    decoration: const InputDecoration(
+                      hintText: '제목을 입력하세요',
+                      border: InputBorder.none,
+                    ),
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 24,
+                      color: AppColors.charcoal,
+                      height: 1.25,
+                      letterSpacing: -0.5,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  onPressed: saveTitle,
+                  icon: const Icon(
+                    Icons.check,
+                    color: AppColors.peachDustDark,
+                  ),
+                ),
+                IconButton(
+                  onPressed: () {
+                    setState(() {
+                      isEditingTitle = false;
+                      titleController.text = title;
+                    });
+                  },
+                  icon: const Icon(
+                    Icons.close,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ],
+            )
+          else
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Text(
+                    title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 24,
+                      color: AppColors.charcoal,
+                      height: 1.25,
+                      letterSpacing: -0.5,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  tooltip: '제목 수정',
+                  onPressed: isAnalysisCompleted
+                      ? () {
+                          setState(() {
+                            isEditingTitle = true;
+                            titleController.text = title;
+                          });
+                        }
+                      : null,
+                  icon: const Icon(
+                    Icons.edit,
+                    size: 20,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ],
             ),
-          ),
           const SizedBox(height: 8),
           if (hasOriginalLink)
             Row(
