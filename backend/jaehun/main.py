@@ -1525,32 +1525,56 @@ async def analyze_image_groups(files: List[UploadFile] = File(...)):
             }
 
         image_texts, original_texts = await extract_texts_from_uploaded_images(files)
-        groups = get_ai_grouped_summaries(image_texts, original_texts)
 
-        if not groups:
-            all_text = "\n\n".join(image_texts).strip()
-            original_all_text = "\n\n".join(original_texts).strip()
-            ai_title, summary, short_summary, category, tags = get_ai_summary(all_text)
+        all_text = "\n\n".join(image_texts).strip()
+        original_all_text = "\n\n".join(original_texts).strip()
 
-            groups = [
-                {
-                    "url": "uploaded_image",
-                    "title": ai_title if ai_title != "분석 실패" else "스크린샷 분석 결과",
-                    "summary": summary if ai_title != "분석 실패" else "이미지 내용을 하나의 카드로 저장했습니다.",
-                    "shortSummary": short_summary if ai_title != "분석 실패" else "이미지 내용을 저장했습니다.",
-                    "detailSummary": summary if ai_title != "분석 실패" else "이미지 내용을 하나의 카드로 저장했습니다.",
-                    "category": category,
-                    "tags": tags if tags else ["이미지"],
-                    "thumbnail": "",
-                    "status": "COMPLETED" if ai_title != "분석 실패" else "FAILED",
-                    "originalText": original_all_text,
-                    "imageIndexes": list(range(len(image_texts))),
-                }
-            ]
+        ai_title, summary, short_summary, category, tags = get_ai_summary(all_text)
+
+        is_long_multi_image_text = (
+            len(files) >= 3
+            and len(original_all_text) >= 800
+        )
+
+        if is_long_multi_image_text:
+            summary = build_preserved_summary_from_original_text(original_all_text)
+            short_summary = make_short_summary_from_preserved_text(original_all_text)
+        elif is_text_heavy_numbered_content(original_all_text):
+            summary = clean_original_for_summary(original_all_text)
+            short_summary = make_short_summary_from_original_text(original_all_text)
+
+        if ai_title == "분석 실패":
+            group = {
+                "url": "uploaded_image",
+                "title": "스크린샷 분석 결과",
+                "summary": "이미지 내용을 하나의 카드로 저장했습니다.",
+                "shortSummary": "이미지 내용을 저장했습니다.",
+                "detailSummary": "이미지 내용을 하나의 카드로 저장했습니다.",
+                "category": "기타",
+                "tags": ["이미지"],
+                "thumbnail": "",
+                "status": "FAILED",
+                "originalText": original_all_text,
+                "imageIndexes": list(range(len(image_texts))),
+            }
+        else:
+            group = {
+                "url": "uploaded_image",
+                "title": ai_title,
+                "summary": summary,
+                "shortSummary": short_summary,
+                "detailSummary": summary,
+                "category": category,
+                "tags": tags if tags else ["이미지"],
+                "thumbnail": "",
+                "status": "COMPLETED",
+                "originalText": original_all_text,
+                "imageIndexes": list(range(len(image_texts))),
+            }
 
         return {
             "status": "ACTIVE",
-            "groups": groups,
+            "groups": [group],
         }
 
     except Exception as e:
@@ -1574,7 +1598,6 @@ async def analyze_image_groups(files: List[UploadFile] = File(...)):
                 }
             ],
         }
-
 
 @app.post("/analyze/complex")
 async def analyze_complex(url: str, files: List[UploadFile] = File(...)):

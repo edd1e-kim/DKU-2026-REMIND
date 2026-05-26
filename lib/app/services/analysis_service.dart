@@ -147,67 +147,40 @@ class AnalysisService {
     }
   }
 
+  /// 기존 add_link_page 쪽에서 analyzeImageGroups()를 호출하고 있어도
+  /// 이제 /analyze/image-groups를 쓰지 않고 /analyze/image 결과를 카드 1개짜리 그룹으로 반환한다.
+  ///
+  /// 결과:
+  /// 이미지 여러 장 업로드 -> 자동 주제 분리 X -> 무조건 카드 1개 저장
   Future<List<Map<String, dynamic>>> analyzeImageGroups(
     List<Uint8List> imageBytesList,
     List<String> fileNames,
   ) async {
-    try {
-      final uri = Uri.parse('$baseUrl/analyze/image-groups');
-      final request = http.MultipartRequest('POST', uri);
+    final analyzed = await analyzeImageFiles(imageBytesList, fileNames);
 
-      for (int i = 0; i < imageBytesList.length; i++) {
-        request.files.add(
-          http.MultipartFile.fromBytes(
-            'files',
-            imageBytesList[i],
-            filename: fileNames[i],
-          ),
-        );
-      }
+    analyzed['imageIndexes'] = List<int>.generate(
+      imageBytesList.length,
+      (index) => index,
+    );
 
-      final streamedResponse = await request.send();
-      final response = await http.Response.fromStream(streamedResponse);
-
-      print('이미지 그룹 분석 상태코드: ${response.statusCode}');
-      print('이미지 그룹 분석 응답: ${utf8.decode(response.bodyBytes)}');
-
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        final decoded = jsonDecode(utf8.decode(response.bodyBytes));
-
-        final rawGroups = decoded['groups'];
-
-        if (rawGroups is List) {
-          return rawGroups.map((group) {
-            if (group is Map<String, dynamic>) {
-              return _normalizeGroupResult(group);
-            }
-
-            return _normalizeGroupResult({});
-          }).toList();
-        }
-
-        final fallback = _normalizeResult(
-          decoded,
-          fallbackUrl: 'uploaded_image',
-        );
-
-        return [fallback];
-      }
-
-      throw Exception('이미지 그룹 분석 실패: ${response.statusCode}');
-    } catch (e) {
-      throw Exception('이미지 그룹 분석 요청 실패: $e');
-    }
+    return [analyzed];
   }
 
   Map<String, dynamic> _normalizeResult(
     Map<String, dynamic> decoded, {
     required String fallbackUrl,
   }) {
+    final summary = (decoded['summary'] ?? '').toString();
+    final shortSummary = (decoded['shortSummary'] ?? summary).toString();
+    final detailSummary =
+        (decoded['detailSummary'] ?? decoded['summary'] ?? '').toString();
+
     return {
       'url': (decoded['url'] ?? fallbackUrl).toString(),
       'title': (decoded['title'] ?? '제목 없음').toString(),
-      'summary': (decoded['summary'] ?? '').toString(),
+      'summary': summary,
+      'shortSummary': shortSummary,
+      'detailSummary': detailSummary,
       'category': (decoded['category'] ?? '기타').toString(),
       'tags': _parseTags(decoded['tags']),
       'thumbnail': (decoded['thumbnail'] ?? '').toString(),
@@ -222,10 +195,17 @@ class AnalysisService {
   }
 
   Map<String, dynamic> _normalizeGroupResult(Map<String, dynamic> decoded) {
+    final summary = (decoded['summary'] ?? '').toString();
+    final shortSummary = (decoded['shortSummary'] ?? summary).toString();
+    final detailSummary =
+        (decoded['detailSummary'] ?? decoded['summary'] ?? '').toString();
+
     return {
       'url': (decoded['url'] ?? 'uploaded_image').toString(),
       'title': (decoded['title'] ?? '스크린샷 분석 결과').toString(),
-      'summary': (decoded['summary'] ?? '').toString(),
+      'summary': summary,
+      'shortSummary': shortSummary,
+      'detailSummary': detailSummary,
       'category': (decoded['category'] ?? '기타').toString(),
       'tags': _parseTags(decoded['tags']),
       'thumbnail': (decoded['thumbnail'] ?? '').toString(),

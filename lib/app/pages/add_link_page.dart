@@ -505,7 +505,7 @@ class _AddLinkPageState extends State<AddLinkPage> {
                 ),
                 SizedBox(height: 8),
                 Text(
-                  '스크린샷 여러 장도 AI가 주제별로 정리해드려요',
+                  '스크린샷 여러 장도 AI가 흐름에 맞게 정리해드려요',
                   style: TextStyle(
                     color: AppColors.textSecondary,
                     fontSize: 14,
@@ -638,7 +638,7 @@ class _AddLinkPageState extends State<AddLinkPage> {
                 ),
                 const SizedBox(height: 12),
                 const Text(
-                  '서로 다른 주제의 스크린샷도 괜찮아요\nAI가 주제별로 나눠 정리해요',
+                  '여러 장의 스크린샷을 올리면 AI가 핵심을 정리해요',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     color: AppColors.textSecondary,
