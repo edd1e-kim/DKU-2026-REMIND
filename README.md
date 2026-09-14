@@ -298,7 +298,7 @@ results = await asyncio.gather(*tasks)
 
 | Member | Role | Main Responsibilities |
 |---|---|---|
-| **박지민** | Frontend · UI/UX · Firebase | Flutter 화면 및 인터랙션, Firebase Auth, Firestore 연동, 콘텐츠 관리 UX |
+| **박지민** · [@jimin-21](https://github.com/jimin-21) | Frontend · UI/UX · Firebase | Flutter 화면 및 인터랙션, Firebase Auth, Firestore 연동, 콘텐츠 관리 UX |
 | **김재훈** · [@edd1e-kim](https://github.com/edd1e-kim) | AI Backend · Data Pipeline | FastAPI, OCR, AI 요약, 비동기 이미지 처리, Smart Grouping, 웹/SNS 파싱 |
 
 > 두 영역은 독립적으로 끝나는 것이 아니라, **Flutter에서 입력한 콘텐츠가 FastAPI 분석 서버를 거쳐 구조화되고 다시 사용자별 Firestore 아카이브로 저장되는 하나의 서비스 흐름**으로 통합했습니다.
