@@ -339,7 +339,6 @@ OPENAI_API_KEY=your_openai_api_key
 RAPIDAPI_KEY=your_rapidapi_key
 ```
 
-> 실제 API Key는 Git에 커밋하지 마세요. `.env`는 `.gitignore`에 포함해야 합니다.
 
 #### 3. Python Environment
 
@@ -383,7 +382,6 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 - Android Emulator → `http://10.0.2.2:8000`
 - Flutter Web → `http://127.0.0.1:8000`
 
-> Flutter/Firebase 클라이언트의 세부 환경 구성은 저장소의 프로젝트 설정 및 Firebase 구성에 따릅니다.
 
 ---
 
