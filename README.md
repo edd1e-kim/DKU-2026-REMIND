@@ -7,7 +7,7 @@
 SNS 링크와 스크린샷을 저장하면 **콘텐츠 수집 → OCR/파싱 → AI 요약·분류 → 개인 아카이빙 → 다시 보기**까지 하나의 흐름으로 연결합니다.
 
 **2026 Dankook University Capstone Design · Team Re:Mind**  
-**2인 팀 · 박지민 / 김재훈 · 2026.03 ~ 2026.05**
+**초기 2인 팀 프로젝트 · 현재 김재훈 단독 개발 및 유지보수 · 2026.03 ~ 현재**
 
 </div>
 
@@ -177,9 +177,9 @@ flowchart TB
 
 ## Core Implementation
 
-ReSee는 **Flutter/Firebase 기반 사용자 서비스 영역**과 **FastAPI/LLM 기반 AI 분석 영역**을 분담하여 개발했습니다.
+ReSee는 초기 개발 단계에서 **Flutter/Firebase 기반 사용자 서비스 영역**과 **FastAPI/LLM 기반 AI 분석 영역**을 분담하여 개발했습니다. 현재는 김재훈이 전체 프로젝트의 후속 개발과 유지보수를 단독으로 진행하고 있습니다.
 
-### Frontend · UX · Firebase — 박지민
+### Frontend · UX · Firebase — 박지민 (초기 구현)
 
 #### Flutter 기반 서비스 UI/UX
 
@@ -294,20 +294,21 @@ results = await asyncio.gather(*tasks)
 
 ---
 
-## Team & Roles
+## Development & Contributions
 
 | Member | Role | Main Responsibilities |
 |---|---|---|
-| **박지민** · [@jimin-21](https://github.com/jimin-21) | Frontend · UI/UX · Firebase | Flutter 화면 및 인터랙션, Firebase Auth, Firestore 연동, 콘텐츠 관리 UX |
-| **김재훈** · [@edd1e-kim](https://github.com/edd1e-kim) | AI Backend · Data Pipeline | FastAPI, OCR, AI 요약, 비동기 이미지 처리, Smart Grouping, 웹/SNS 파싱 |
+| **박지민** · [@jimin-21](https://github.com/jimin-21) | 초기 개발 · Frontend · UI/UX · Firebase | Flutter 화면 및 인터랙션, Firebase Auth, Firestore 연동, 콘텐츠 관리 UX |
+| **김재훈** · [@edd1e-kim](https://github.com/edd1e-kim) | 초기 개발 · AI Backend · 현재 Maintainer | FastAPI, OCR, AI 요약, 비동기 이미지 처리, Smart Grouping, 웹/SNS 파싱 및 현재 프로젝트 후속 개발·유지보수 |
 
-> 두 영역은 독립적으로 끝나는 것이 아니라, **Flutter에서 입력한 콘텐츠가 FastAPI 분석 서버를 거쳐 구조화되고 다시 사용자별 Firestore 아카이브로 저장되는 하나의 서비스 흐름**으로 통합했습니다.
+> 초기 개발에서는 두 영역을 **Flutter에서 입력한 콘텐츠가 FastAPI 분석 서버를 거쳐 구조화되고 다시 사용자별 Firestore 아카이브로 저장되는 하나의 서비스 흐름**으로 통합했습니다. 현재는 김재훈이 전체 코드베이스를 관리하며 졸업작품으로 후속 개발을 이어가고 있습니다.
 
 ---
 
 ## Development Timeline
 
-**2026.03 ~ 2026.05 · 총 7주 (3주 차 ~ 9주 차)**
+**2026.03 ~ 2026.05 · 초기 2인 팀 개발 (총 7주, 3주 차 ~ 9주 차)**  
+**2026.09 ~ 현재 · 김재훈 단독 후속 개발 및 유지보수**
 
 | Stage | Frontend / Firebase | AI Backend / Data Pipeline |
 |---|---|---|
@@ -318,6 +319,7 @@ results = await asyncio.gather(*tasks)
 | 테스트 | 전체 사용자 흐름 QA | 요약 품질·응답 처리 안정화 |
 | 고도화 | 개인화, 검색, 카테고리, 생명주기 UX | Multi-image OCR, Grouping, 요약·전처리 고도화 |
 | 마무리 | 최종 UI 및 시연 준비 | 기술 정리 및 최종 시연 연동 |
+| 현재 | 전체 코드베이스 점검 및 후속 개발 | 졸업작품을 위한 유지보수 및 기능 고도화 진행 |
 
 ---
 
@@ -389,8 +391,8 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 
 ReSee는 단순한 북마크 저장 기능을 넘어서, **수집한 정보를 AI로 구조화하고 다시 확인하도록 유도하는 개인 지식 아카이브**를 구현하는 것을 목표로 했습니다.
 
-프로젝트를 통해 팀은 다음 흐름을 하나의 애플리케이션으로 통합했습니다.
+초기 팀 개발을 통해 다음 흐름을 하나의 애플리케이션으로 통합했습니다.
 
 **콘텐츠 입력 → 외부 데이터 수집/OCR → AI 분석 → 구조화된 결과 → 사용자별 저장 → 검색·리마인드·생명주기 관리**
 
-현재 캡스톤 프로토타입 개발을 완료했으며, 별도의 공개 배포 URL은 제공하지 않습니다.
+현재 캡스톤 프로토타입을 기반으로 김재훈이 졸업작품을 위한 후속 개발과 유지보수를 단독으로 진행하고 있으며, 별도의 공개 배포 URL은 제공하지 않습니다.
