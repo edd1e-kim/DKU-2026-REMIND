@@ -32,9 +32,9 @@ ReSee는 Instagram·웹 링크와 여러 장의 스크린샷을 입력받아 콘
 ### User Flow
 
 ```mermaid
-flowchart LR
+flowchart TB
     A[링크 / 스크린샷 저장] --> B[본문 수집 / OCR]
-    B --> C[AI 분석 및 그룹화]
+    B --> C[AI 분석 및 통합 요약]
     C --> D[제목 / 요약 / 카테고리 / 태그 생성]
     D --> E[사용자별 아카이브 저장]
     E --> F[검색 / 고정 / 컬렉션 / 다시 보기]
@@ -46,18 +46,18 @@ flowchart LR
 
 ### 1. 링크·이미지 기반 콘텐츠 수집
 
-- 일반 웹 페이지 및 Instagram 링크 분석
+- 일반 웹 페이지 본문 및 Instagram 게시물·릴스의 캡션 기반 분석
 - 여러 장의 스크린샷 동시 업로드
 - URL과 이미지를 함께 입력하는 복합 분석
-- 업로드 이미지 원본 보존 및 상세 화면에서 확인
+- 업로드 이미지를 서버 로컬 파일로 저장하고 상세 화면에서 확인
 
 ### 2. AI 기반 요약·분류
 
 - 이미지 OCR과 언어 요약을 분리한 **Dual-Pass AI Pipeline**
 - 상세 화면용 `summary`와 빠른 확인용 `shortSummary` 제공
 - 콘텐츠에 맞는 카테고리 및 태그 생성
-- 여러 스크린샷을 게시물 단위로 자동 묶는 **Smart Grouping**
-- AI 가공 결과와 별도로 원문 텍스트를 보존해 결과 대조 가능
+- 여러 스크린샷의 OCR 결과를 업로드 순서대로 결합해 **하나의 콘텐츠로 통합 분석**
+- 요약과 별도로 웹에서 수집한 본문 또는 이미지에서 추출·정제한 텍스트를 `originalText`로 제공
 
 ### 3. 개인화 아카이브
 
@@ -144,7 +144,6 @@ flowchart TB
     WEB[BeautifulSoup Web Parser]
     IG[RapidAPI Instagram Parser]
     OCR[GPT-4o Vision OCR]
-    GROUP[Smart Grouping]
     SUM[GPT-4o Summarization]
 
     U --> F
@@ -154,10 +153,9 @@ flowchart TB
     API --> WEB
     API --> IG
     API --> OCR
-    OCR --> GROUP
+    OCR --> SUM
     WEB --> SUM
     IG --> SUM
-    GROUP --> SUM
     SUM --> API
     API --> F
     F --> DB
@@ -168,8 +166,8 @@ flowchart TB
 
 1. 사용자가 링크 또는 스크린샷을 등록합니다.
 2. FastAPI 서버가 입력 형태에 따라 웹 파싱 또는 이미지 OCR을 수행합니다.
-3. 다중 이미지 입력은 게시물 단위로 그룹화합니다.
-4. 수집된 원문을 AI가 `title`, `summary`, `shortSummary`, `category`, `tags` 구조로 정리합니다.
+3. 다중 이미지 입력은 업로드 순서대로 OCR 결과를 결합해 하나의 콘텐츠로 처리합니다.
+4. 수집·추출한 텍스트를 바탕으로 `title`, `summary`, `shortSummary`, `category`, `tags`를 생성하고 필요한 후처리를 수행합니다.
 5. Flutter 클라이언트가 결과를 받아 사용자 UID 기준 Firestore 데이터로 저장·관리합니다.
 6. 사용자는 아카이브, 검색, 고정, 컬렉션, 휴지통 등을 통해 저장한 콘텐츠를 다시 활용합니다.
 
@@ -208,20 +206,20 @@ ReSee는 초기 개발 단계에서 **Flutter/Firebase 기반 사용자 서비�
 
 #### Dual-Pass AI Pipeline
 
-멀티모달 모델에 이미지 분석과 요약을 한 번에 맡길 때 발생할 수 있는 누락·환각을 줄이기 위해 **시각 정보 추출과 언어적 요약을 분리**했습니다.
+이미지에서 읽을 수 있는 정보를 먼저 추출하고, 추출한 텍스트를 바탕으로 요약하는 **2단계 처리 구조**를 적용했습니다. 누락과 원문에 없는 내용 생성을 줄이는 것을 목표로 프롬프트를 설계했으며, 정확도 개선이나 환각 감소율을 정량적으로 검증한 결과는 제시하지 않습니다.
 
 **Pass 1 — OCR / Metadata Extraction**
 
-`extract_image_text()`에서 GPT-4o Vision을 이용해 화면에 실제로 보이는 텍스트와 함께 다음 메타데이터를 구조화합니다.
+`extract_image_text()`에서 GPT-4o의 이미지 입력 기능을 이용해 텍스트와 다음 메타데이터를 JSON 형태로 추출하도록 요청합니다. 보이지 않거나 읽기 어려운 내용은 추측하지 않도록 프롬프트에 명시했습니다.
 
 - `sourceAccount`: 게시물 작성 계정
-- `carouselInfo`: 슬라이드 순서
+- `carouselInfo`: 화면에 표시된 슬라이드 번호(예: `1/5`)
 - `captionSnippet`: 캡션 일부
 - `platformHint`, `confidence` 등 분석용 정보
 
 **Pass 2 — Structured Summarization**
 
-`call_summary_ai()`는 추출 결과를 바탕으로 화면에서 바로 사용할 수 있는 JSON을 생성합니다.
+`call_summary_ai()`는 추출 결과를 바탕으로 다음 필드를 포함하는 JSON 응답을 요청합니다.
 
 ```json
 {
@@ -233,7 +231,9 @@ ReSee는 초기 개발 단계에서 **Flutter/Firebase 기반 사용자 서비�
 }
 ```
 
-프롬프트에서는 원문 구조 보존, SNS 행동 유도 문구 제거, 원문에 없는 내용 생성 금지 등을 명시하고 JSON response format으로 결과 스키마를 고정했습니다.
+프롬프트에는 원문 구조 보존, SNS 행동 유도 문구 제거, 원문에 없는 내용 생성 금지를 명시했습니다. `response_format={"type": "json_object"}`로 JSON 모드 응답을 받은 뒤 필드를 추출하고 카테고리·태그 등을 정규화합니다. JSON Schema에 의한 필드·타입 강제 검증은 적용하지 않았습니다.
+
+이미지 분석에서는 텍스트가 많거나 번호형 목록이 포함된 경우 원문 기반 후처리로 상세·핵심 요약을 구성하는 분기도 사용합니다. `originalText`는 OCR 및 정제 과정을 거친 텍스트이므로 원본 이미지의 모든 문구가 그대로 보존된다는 의미는 아닙니다.
 
 #### Async Multi-Image Processing
 
@@ -244,25 +244,28 @@ semaphore = asyncio.Semaphore(OCR_PARALLEL_LIMIT)  # 8
 results = await asyncio.gather(*tasks)
 ```
 
-- 최대 **8개 이미지 동시 OCR 처리**
+- **요청당 최대 8개 이미지 OCR 동시 처리**: 세마포어는 요청 내부에 생성되며 서버 전체의 동시 호출 수를 제한하지 않습니다.
 - `asyncio.to_thread()`로 동기 AI 호출을 이벤트 루프와 분리
-- 처리 완료 순서와 관계없이 원본 이미지 순서를 복원
+- 입력 인덱스로 결과를 정렬하여 **업로드 순서대로 OCR 결과를 결합**
+- 슬라이드 번호를 이용해 실제 게시물 순서를 자동 재배열하는 기능은 제공하지 않습니다.
 
-#### Smart Grouping Engine
+#### Multi-Image Integrated Analysis
 
-`/analyze/image-groups`에서 여러 스크린샷의 `sourceAccount`, `captionSnippet`, `carouselInfo` 등을 비교해 **같은 게시물끼리 자동으로 카드 단위 그룹화**합니다.
+`/analyze/image-groups`는 업로드한 모든 이미지의 OCR 결과를 결합해 한 번의 통합 분석 흐름으로 처리합니다.
 
-- 게시물 작성 계정과 캡션을 우선 기준으로 그룹 판단
-- Carousel 번호를 활용해 연속 이미지 식별
-- `imageIndexes`로 원본 이미지와 그룹 결과 연결
-- 모델이 이미지를 누락했을 경우 미배정 인덱스를 탐지하고 보정
+- `groups` 배열에는 하나의 분석 결과를 반환합니다.
+- `imageIndexes`에는 업로드 이미지 전체의 0부터 시작하는 인덱스를 넣습니다.
+- 서로 다른 게시물을 작성 계정·캡션·슬라이드 번호로 구분해 자동 분리하지 않습니다.
+- 그룹화와 미배정 인덱스 보정 로직을 포함한 `get_ai_grouped_summaries()` 함수는 파일에 남아 있지만 현재 API에서는 호출하지 않습니다.
+
+따라서 현재 다중 이미지 분석은 함께 정리할 이미지들을 한 번에 업로드하는 방식입니다.
 
 #### Robust Parsing & Preprocessing
 
 - Naver Blog 본문 접근을 위해 `PostView.naver` 경로와 본문 컨테이너를 파싱
-- Instagram 게시물·릴스 데이터는 RapidAPI를 통해 수집
+- Instagram 게시물·릴스 링크에서 RapidAPI를 통해 캡션과 썸네일 URL을 수집하며, 영상 재생·음성 전사·영상 프레임 분석은 수행하지 않습니다.
 - 일반 웹 페이지는 BeautifulSoup 기반으로 본문 텍스트 추출
-- 긴 텍스트는 `CHUNK_SIZE = 9000` 단위로 나눈 뒤 부분 요약 → 재통합 → 최종 요약
+- 요약 입력이 `MAX_SUMMARY_INPUT_CHARS = 11000`자를 초과하면 `CHUNK_SIZE = 9000`자를 기준으로 나눠 부분 요약 → 재통합 → 최종 요약
 - 좋아요·팔로우·댓글·프로필 링크 등 SNS 노이즈 제거
 - 번호형 목록, 체크리스트, 시간·용량·조건 등 정보 구조를 가능한 한 유지
 
@@ -273,10 +276,18 @@ results = await asyncio.gather(*tasks)
 | Method | Endpoint | Description |
 |---|---|---|
 | `POST` | `/analyze` | URL 콘텐츠 분석 |
-| `POST` | `/analyze/image` | 다중 이미지 OCR 및 분석 |
-| `POST` | `/analyze/image-groups` | 여러 스크린샷을 게시물 단위로 그룹화 후 분석 |
+| `POST` | `/analyze/image` | 다중 이미지 OCR 결과를 결합해 하나의 콘텐츠로 분석 |
+| `POST` | `/analyze/image-groups` | 전체 이미지를 통합 분석하고 단일 그룹 및 전체 이미지 인덱스 반환 |
 | `POST` | `/analyze/complex` | URL + 이미지 복합 분석 |
+| `POST` | `/upload/images` | 서버 로컬 파일 저장 및 `imageUrls` 반환 |
+| `GET` | `/uploads/{filename}` | 저장된 업로드 파일 제공 |
 | `GET` | `/` | Health check |
+
+---
+
+`/analyze`와 `/analyze/complex`의 `url`은 쿼리 매개변수로 전달합니다. 이미지 입력은 multipart/form-data의 `files` 필드를 사용하며, `/analyze/complex`의 현재 선언에서는 파일 필드도 필요합니다.
+
+`/upload/images`는 UUID 기반 파일명으로 서버의 `uploads` 디렉터리에 저장합니다. Firebase Storage에 저장하는 방식이 아니므로 업로드 파일을 유지하려면 해당 디렉터리도 보존해야 합니다.
 
 ---
 
@@ -288,7 +299,7 @@ results = await asyncio.gather(*tasks)
 | Authentication | Firebase Authentication |
 | Database | Cloud Firestore |
 | AI Backend | Python, FastAPI, Uvicorn |
-| AI / Vision | OpenAI GPT-4o, GPT-4o-mini |
+| AI / Vision | OpenAI GPT-4o: 이미지 정보 추출 및 텍스트 요약 |
 | Crawling / Parsing | BeautifulSoup, Requests, RapidAPI |
 | Async Processing | `asyncio`, `Semaphore`, `gather`, `to_thread` |
 
@@ -299,7 +310,7 @@ results = await asyncio.gather(*tasks)
 | Member | Role | Main Responsibilities |
 |---|---|---|
 | **박지민** · [@jimin-21](https://github.com/jimin-21) | 초기 개발 · Frontend · UI/UX · Firebase | Flutter 화면 및 인터랙션, Firebase Auth, Firestore 연동, 콘텐츠 관리 UX |
-| **김재훈** · [@edd1e-kim](https://github.com/edd1e-kim) | 초기 개발 · AI Backend · 현재 Maintainer | FastAPI, OCR, AI 요약, 비동기 이미지 처리, Smart Grouping, 웹/SNS 파싱 및 현재 프로젝트 후속 개발·유지보수 |
+| **김재훈** · [@edd1e-kim](https://github.com/edd1e-kim) | 초기 개발 · AI Backend · 현재 Maintainer | FastAPI, OCR, AI 요약, 비동기 이미지 처리, 다중 이미지 통합 분석, 웹/SNS 파싱 및 현재 프로젝트 후속 개발·유지보수 |
 
 > 초기 개발에서는 두 영역을 **Flutter에서 입력한 콘텐츠가 FastAPI 분석 서버를 거쳐 구조화되고 다시 사용자별 Firestore 아카이브로 저장되는 하나의 서비스 흐름**으로 통합했습니다. 현재는 김재훈이 전체 코드베이스를 관리하며 졸업작품으로 후속 개발을 이어가고 있습니다.
 
@@ -317,7 +328,7 @@ results = await asyncio.gather(*tasks)
 | 구현 II | 상세 화면, 메모·저장 기능 | LLM 요약 프롬프트 설계 및 테스트 |
 | 통합 | 클라이언트와 API 연결 | FastAPI 서버 및 분석 API 연동 |
 | 테스트 | 전체 사용자 흐름 QA | 요약 품질·응답 처리 안정화 |
-| 고도화 | 개인화, 검색, 카테고리, 생명주기 UX | Multi-image OCR, Grouping, 요약·전처리 고도화 |
+| 고도화 | 개인화, 검색, 카테고리, 생명주기 UX | Multi-image OCR, 다중 이미지 통합 분석, 요약·전처리 고도화 |
 | 마무리 | 최종 UI 및 시연 준비 | 기술 정리 및 최종 시연 연동 |
 | 현재 | 전체 코드베이스 점검 및 후속 개발 | 졸업작품을 위한 유지보수 및 기능 고도화 진행 |
 
@@ -326,6 +337,12 @@ results = await asyncio.gather(*tasks)
 ## Local Setup
 
 ### AI Backend
+
+저장소 루트에서 `backend/jaehun` 디렉터리로 이동한 뒤 아래 명령을 실행합니다.
+
+```bash
+cd backend/jaehun
+```
 
 #### 1. Required API Keys
 
@@ -348,10 +365,16 @@ RAPIDAPI_KEY=your_rapidapi_key
 python -m venv venv
 ```
 
-**Windows**
+**Windows PowerShell**
 
-```bash
-venv\Scripts\activate
+```powershell
+.\venv\Scripts\Activate.ps1
+```
+
+**Windows 명령 프롬프트(cmd)**
+
+```bat
+venv\Scripts\activate.bat
 ```
 
 **macOS / Linux**
@@ -396,3 +419,17 @@ ReSee는 단순한 북마크 저장 기능을 넘어서, **수집한 정보를 A
 **콘텐츠 입력 → 외부 데이터 수집/OCR → AI 분석 → 구조화된 결과 → 사용자별 저장 → 검색·리마인드·생명주기 관리**
 
 현재 캡스톤 프로토타입을 기반으로 김재훈이 졸업작품을 위한 후속 개발과 유지보수를 단독으로 진행하고 있으며, 별도의 공개 배포 URL은 제공하지 않습니다.
+
+
+---
+
+## Implementation Scope & References
+
+현재 다중 이미지 분석은 전체 입력을 하나의 콘텐츠로 처리합니다. 게시물별 자동 그룹화는 현재 API에서 제공하지 않으며, GPT-4o-mini를 사용하는 그룹화 함수도 호출되지 않습니다. 이미지 텍스트 추출 및 요약에는 오류나 누락이 있을 수 있으므로 중요한 정보는 원본과 대조해야 합니다.
+
+아래 링크는 구현을 확인한 코드 버전에 고정되어 있습니다. 기능 설명은 코드 확인에 근거하며 외부 API의 현재 가용성이나 실제 분석 품질을 보장하지 않습니다.
+
+- [이미지 텍스트·메타데이터 추출 및 요청당 최대 8개 동시 OCR](https://github.com/edd1e-kim/DKU-2026-REMIND/blob/60377ea08ce502f78066f76e77eb2b1b583d583e/backend/jaehun/main.py#L1159-L1344)
+- [JSON 모드 요약 응답 및 정규화](https://github.com/edd1e-kim/DKU-2026-REMIND/blob/60377ea08ce502f78066f76e77eb2b1b583d583e/backend/jaehun/main.py#L686-L716)
+- [다중 이미지 통합 분석 및 단일 그룹 반환](https://github.com/edd1e-kim/DKU-2026-REMIND/blob/60377ea08ce502f78066f76e77eb2b1b583d583e/backend/jaehun/main.py#L1504-L1578)
+- [URL·이미지 복합 분석 및 이미지 로컬 저장](https://github.com/edd1e-kim/DKU-2026-REMIND/blob/60377ea08ce502f78066f76e77eb2b1b583d583e/backend/jaehun/main.py#L1602-L1684)
