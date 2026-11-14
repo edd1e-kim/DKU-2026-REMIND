@@ -12,7 +12,18 @@ SNS 링크와 스크린샷을 저장하면 **콘텐츠 수집 → OCR/파싱 →
 </div>
 
 ---
+## 졸업작품전시회 제출 자료
 
+- 출품자: 단국대학교 소프트웨어학과 32211007 김재훈
+- [프로젝트 결과보고서 PDF](docs/ReSee_Report.pdf)
+- [발표자료 PDF](docs/ReSee_Presentation.pdf)
+- [포스터 PDF](docs/ReSee_Poster.pdf)
+- [시연 영상 보기 — YouTube](https://youtu.be/y5OgZ-FeUVA)
+
+소스 코드와 기술 설명은 본 저장소에 포함되어 있으며,
+로컬 실행 방법은 아래 Local Setup 항목에서 확인할 수 있습니다.
+
+---
 ## Demo
 
 <div align="center">
