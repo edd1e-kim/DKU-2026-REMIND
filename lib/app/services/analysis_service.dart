@@ -166,10 +166,21 @@ class AnalysisService {
     return [analyzed];
   }
 
-  Map<String, dynamic> _normalizeResult(
+    Map<String, dynamic> _normalizeResult(
     Map<String, dynamic> decoded, {
     required String fallbackUrl,
   }) {
+    final status = (decoded['status'] ?? '')
+        .toString()
+        .trim()
+        .toUpperCase();
+
+    if (status == 'FAIL' ||
+        status == 'FAILED' ||
+        status == 'ERROR') {
+      throw Exception('AI 분석에 실패했습니다. 다시 시도해주세요.');
+    }
+
     final summary = (decoded['summary'] ?? '').toString();
     final shortSummary = (decoded['shortSummary'] ?? summary).toString();
     final detailSummary =
